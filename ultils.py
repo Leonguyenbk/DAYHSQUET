@@ -2,6 +2,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.keys import Keys
+import os
 
 from helpers import wait_query_done
 
@@ -69,12 +70,10 @@ def wait_tracuu_module_ready(driver, timeout=60):
     print("✅ Module tra cứu (#donDangKyTraCuuModule) đã load xong!")
     return True
 
-def chon_xa_va_mo_tra_cuu(driver, wait, ma_xa, logger=None):
+def chon_xa(driver, wait, ma_xa, logger=None):
     """
-    Sau khi đăng nhập:
-    1. Chọn xã theo mã xã
-    2. Mở modal tra cứu đơn đăng ký
-    3. Chờ module tra cứu load xong
+    Chọn xã theo mã xã.
+    Chỉ cần gọi 1 lần sau khi đăng nhập.
     """
 
     def log(msg):
@@ -83,50 +82,30 @@ def chon_xa_va_mo_tra_cuu(driver, wait, ma_xa, logger=None):
         else:
             print(msg)
 
-    log(f"✅ Đăng nhập thành công. Bắt đầu chọn xã có mã: {ma_xa}")
+    try:
+        log(f"✅ Bắt đầu chọn xã có mã: {ma_xa}")
 
-    # Chờ combobox xã xuất hiện
-    select_xa = wait.until(
-        EC.presence_of_element_located((By.ID, "ddlPhuongXaKeKhai"))
-    )
+        select_xa = wait.until(
+            EC.presence_of_element_located((By.ID, "ddlPhuongXaKeKhai"))
+        )
 
-    driver.execute_script(
-        "arguments[0].scrollIntoView({block:'center'});",
-        select_xa
-    )
+        driver.execute_script(
+            "arguments[0].scrollIntoView({block:'center'});",
+            select_xa
+        )
 
-    # Chọn xã bằng Select cho chắc
-    Select(select_xa).select_by_value(ma_xa)
+        Select(select_xa).select_by_value(str(ma_xa))
 
-    # Bắn sự kiện change để web nhận
-    driver.execute_script("""
-        arguments[0].dispatchEvent(new Event('change', { bubbles: true }));
-    """, select_xa)
+        driver.execute_script("""
+            arguments[0].dispatchEvent(new Event('change', { bubbles: true }));
+        """, select_xa)
 
-    log(f"✅ Đã chọn xã có mã: {ma_xa}.")
+        log(f"✅ Đã chọn xã có mã: {ma_xa}.")
+        return True
 
-    # Mở modal tra cứu
-    log("🔎 Mở cửa sổ tra cứu…")
-
-    tra_cuu_button = wait.until(
-        EC.element_to_be_clickable((By.ID, "btnChonDonDangKy"))
-    )
-
-    driver.execute_script(
-        "arguments[0].scrollIntoView({block:'center'});",
-        tra_cuu_button
-    )
-
-    driver.execute_script("arguments[0].click();", tra_cuu_button)
-
-    log("✅ Đã bấm nút mở cửa sổ tra cứu.")
-
-    # Chờ module tra cứu load xong
-    wait_tracuu_module_ready(driver, timeout=60)
-
-    log("✅ Cửa sổ tra cứu đã sẵn sàng.")
-
-    return True
+    except Exception as e:
+        log(f"❌ Lỗi khi chọn xã {ma_xa}: {e}")
+        return False
 
 def wait_tracuu_section_ready(driver, timeout=60):
     selector = "#donDangKyTraCuuModule > div.panel-body > div > div:nth-child(3)"
@@ -214,6 +193,51 @@ def wait_and_count_tblTraCuu(driver, timeout=60):
 
     print("➡️ Số bản ghi:", count)
     return count
+
+def mo_tra_cuu_don_dang_ky(driver, wait, logger=None):
+    """
+    Mở modal tra cứu đơn đăng ký.
+    Dùng được nhiều lần, nhất là sau khi bỏ đơn.
+    """
+
+    def log(msg):
+        if logger:
+            logger.log(msg)
+        else:
+            print(msg)
+
+    try:
+        log("🔎 Mở cửa sổ tra cứu đơn đăng ký...")
+
+        tra_cuu_button = wait.until(
+            EC.element_to_be_clickable((By.ID, "btnChonDonDangKy"))
+        )
+
+        driver.execute_script(
+            "arguments[0].scrollIntoView({block:'center'});",
+            tra_cuu_button
+        )
+
+        try:
+            tra_cuu_button.click()
+        except Exception:
+            driver.execute_script("arguments[0].click();", tra_cuu_button)
+
+        log("✅ Đã bấm nút mở cửa sổ tra cứu.")
+
+        WebDriverWait(driver, 30).until(
+            EC.visibility_of_element_located((
+                By.CSS_SELECTOR,
+                "div[id^='mdlTraCuuDonDangKy-'].top-left-menu__child-modal-popup.in[style*='display: block'][style*='z-index: 1050']"
+            ))
+        )
+
+        log("✅ Cửa sổ tra cứu đã sẵn sàng.")
+        return True
+
+    except Exception as e:
+        log(f"❌ Lỗi khi mở cửa sổ tra cứu: {e}")
+        return False
 
 def nhap_to_thua_va_tim_kiem(driver, wait, so_to, so_thua, timeout=60):
     """
@@ -721,4 +745,289 @@ def them_file_don_dang_ky_trong_add_hosoquet(
 
     except Exception as e:
         print(f"❌ Lỗi khi thêm file Đơn đăng ký trong AddHoSoQuet: {e}")
+        return False
+    
+# === GẮN HỒ SƠ QUÉT VỚI ĐƠN ĐĂNG KÝ ===
+def upload_file_theo_mo_ta_trong_add_hosoquet(
+    driver,
+    modal_add_hsq,
+    maxa,
+    loaidat,
+    file_path,
+    timeout=30
+):
+    """
+    Trong modal AddHoSoQuet:
+    - Tìm dòng trong #tbDanhSachFile có cột Mô tả = CHUACOGIAY_{MAXA}_{LOAIDAT}-DDK
+    - Gửi file vào input[type=file] của dòng đó
+    - Nhấn #btnUploadFile trong chính dòng đó
+
+    Return:
+        True nếu upload thành công
+        False nếu lỗi
+    """
+
+    try:
+        wait = WebDriverWait(driver, timeout)
+
+        mo_ta_can_tim = f"CHUACOGIAY_{maxa}_{loaidat}-DDK"
+
+        if not os.path.isfile(file_path):
+            print(f"❌ Không tìm thấy file: {file_path}")
+            return False
+
+        print(f"🔎 Đang tìm dòng có mô tả: {mo_ta_can_tim}")
+
+        # --- Chờ bảng danh sách file ---
+        table = wait.until(
+            lambda d: modal_add_hsq.find_element(
+                By.CSS_SELECTOR,
+                "#tbDanhSachFile"
+            )
+        )
+
+        # --- Tìm đúng dòng theo cột mô tả ---
+        def tim_dong_theo_mo_ta(d):
+            rows = table.find_elements(By.CSS_SELECTOR, "tbody tr")
+
+            for tr in rows:
+                try:
+                    td_mota = tr.find_element(
+                        By.CSS_SELECTOR,
+                        "td:nth-child(1)"
+                    )
+
+                    text_mota = td_mota.text.strip()
+
+                    if text_mota == mo_ta_can_tim:
+                        return tr
+
+                except:
+                    continue
+
+            return False
+
+        tr_can_upload = wait.until(tim_dong_theo_mo_ta)
+
+        print(f"✅ Đã tìm thấy dòng mô tả: {mo_ta_can_tim}")
+
+        # --- Tìm input file trong dòng đó ---
+        input_file = tr_can_upload.find_element(
+            By.CSS_SELECTOR,
+            "input[type='file']"
+        )
+
+        # Vì input file đang display:none nên cho hiện tạm để send_keys chắc ăn
+        driver.execute_script("""
+            arguments[0].style.display = 'block';
+            arguments[0].style.visibility = 'visible';
+            arguments[0].style.opacity = 1;
+            arguments[0].style.height = '30px';
+            arguments[0].style.width = '300px';
+        """, input_file)
+
+        input_file.send_keys(file_path)
+
+        print(f"✅ Đã chọn file: {file_path}")
+
+        print("✅ Upload file hoàn tất.")
+        return True
+
+    except Exception as e:
+        print(f"❌ Lỗi khi upload file theo mô tả: {e}")
+        return False
+
+# === CÂP NHẬT VÀ ĐÓNG MODAL ===
+def cap_nhat_va_dong_modal_hosoquet(driver, modal_add_hsq, timeout=30):
+    """
+    Sau khi upload file:
+    - Nhấn #btnCapNhatHoSoQuet trong #vModuleAddHoSoQuet-*
+    - Chờ xử lý xong
+    - Đóng modal #mdlHoSoQuet-* bằng nút #closeModal
+
+    Return:
+        True nếu thành công
+        False nếu lỗi
+    """
+
+    try:
+        wait = WebDriverWait(driver, timeout)
+
+        # --- Tìm module AddHoSoQuet trong modal add ---
+        module_add = wait.until(
+            lambda d: modal_add_hsq.find_element(
+                By.CSS_SELECTOR,
+                "div[id^='vModuleAddHoSoQuet-']"
+            )
+        )
+
+        # --- Tìm nút Cập nhật hồ sơ quét ---
+        btn_cap_nhat = wait.until(
+            lambda d: module_add.find_element(
+                By.CSS_SELECTOR,
+                "#btnCapNhatHoSoQuet"
+            )
+        )
+
+        driver.execute_script(
+            "arguments[0].scrollIntoView({block:'center'});",
+            btn_cap_nhat
+        )
+
+        try:
+            btn_cap_nhat.click()
+        except:
+            driver.execute_script("arguments[0].click();", btn_cap_nhat)
+
+        print("✅ Đã nhấn nút Cập nhật hồ sơ quét.")
+
+        wait_query_done(driver, timeout=timeout)
+
+        # --- Chờ modal AddHoSoQuet đóng hoặc xử lý xong ---
+        try:
+            wait.until(
+                EC.invisibility_of_element_located((
+                    By.CSS_SELECTOR,
+                    "div[id^='mdlAddHoSoQuet-']"
+                ))
+            )
+            print("✅ Modal AddHoSoQuet đã đóng.")
+        except:
+            print("⚠️ Modal AddHoSoQuet chưa đóng, tiếp tục đóng modal Hồ sơ quét.")
+
+        # --- Tìm modal Hồ sơ quét cha ---
+        modal_ho_so_quet = wait.until(
+            EC.visibility_of_element_located((
+                By.CSS_SELECTOR,
+                "div[id^='mdlHoSoQuet-'].modal.in, "
+                "div[id^='mdlHoSoQuet-'].modal.show, "
+                "div[id^='mdlHoSoQuet-'].in, "
+                "div[id^='mdlHoSoQuet-'].show"
+            ))
+        )
+
+        # --- Nút đóng trong modal Hồ sơ quét ---
+        btn_close = wait.until(
+            lambda d: modal_ho_so_quet.find_element(
+                By.CSS_SELECTOR,
+                "#closeModal"
+            )
+        )
+
+        driver.execute_script(
+            "arguments[0].scrollIntoView({block:'center'});",
+            btn_close
+        )
+
+        try:
+            btn_close.click()
+        except:
+            driver.execute_script("arguments[0].click();", btn_close)
+
+        print("✅ Đã nhấn Đóng modal Hồ sơ quét.")
+
+        wait.until(
+            EC.invisibility_of_element_located((
+                By.CSS_SELECTOR,
+                "div[id^='mdlHoSoQuet-']"
+            ))
+        )
+
+        print("✅ Modal Hồ sơ quét đã đóng.")
+        return True
+
+    except Exception as e:
+        print(f"❌ Lỗi khi cập nhật và đóng modal hồ sơ quét: {e}")
+        return False
+    
+# === BỎ ĐƠN ĐĂNG KÝ ===
+def bo_don_dang_ky(driver, timeout=30):
+    """
+    Bỏ đơn đăng ký:
+    - Nhấn #btnBoDonDangKy trong #updateDonDangKyModule
+    - Chờ hộp xác nhận jconfirm hiện ra
+    - Nhấn nút Đồng ý
+    - Chờ jconfirm biến mất
+
+    Return:
+        True nếu bỏ đơn thành công
+        False nếu lỗi
+    """
+
+    try:
+        wait = WebDriverWait(driver, timeout)
+
+        # --- Tìm nút Bỏ đơn đăng ký ---
+        btn_bo_don = wait.until(
+            EC.presence_of_element_located((
+                By.CSS_SELECTOR,
+                "#updateDonDangKyModule #btnBoDonDangKy"
+            ))
+        )
+
+        driver.execute_script(
+            "arguments[0].scrollIntoView({block:'center'});",
+            btn_bo_don
+        )
+
+        # --- Click nút Bỏ đơn ---
+        try:
+            wait.until(
+                EC.element_to_be_clickable((
+                    By.CSS_SELECTOR,
+                    "#updateDonDangKyModule #btnBoDonDangKy"
+                ))
+            ).click()
+        except Exception:
+            driver.execute_script("arguments[0].click();", btn_bo_don)
+
+        print("✅ Đã nhấn nút Bỏ đơn đăng ký.")
+
+        # --- Chờ hộp xác nhận hiện ra ---
+        jconfirm = wait.until(
+            EC.visibility_of_element_located((
+                By.CSS_SELECTOR,
+                "div.jconfirm.jconfirm-vbdlis-theme.jconfirm-open"
+            ))
+        )
+
+        print("✅ Hộp xác nhận bỏ đơn đã hiện ra.")
+
+        # --- Kiểm tra đúng hộp xác nhận bỏ đơn ---
+        title = jconfirm.find_element(
+            By.CSS_SELECTOR,
+            ".jconfirm-title"
+        ).text.strip()
+
+        print(f"🔎 Tiêu đề xác nhận: {title}")
+
+        # --- Tìm nút Đồng ý ---
+        btn_dong_y = wait.until(
+            lambda d: jconfirm.find_element(
+                By.CSS_SELECTOR,
+                ".jconfirm-buttons button.btn-orange"
+            )
+        )
+
+        # --- Click Đồng ý ---
+        try:
+            btn_dong_y.click()
+        except Exception:
+            driver.execute_script("arguments[0].click();", btn_dong_y)
+
+        print("✅ Đã nhấn Đồng ý bỏ đơn.")
+
+        # --- Chờ jconfirm biến mất ---
+        wait.until(
+            EC.invisibility_of_element_located((
+                By.CSS_SELECTOR,
+                "div.jconfirm.jconfirm-vbdlis-theme.jconfirm-open"
+            ))
+        )
+
+        print("✅ Hộp xác nhận đã biến mất. Đã bỏ đơn đăng ký.")
+        return True
+
+    except Exception as e:
+        print(f"❌ Lỗi khi bỏ đơn đăng ký: {e}")
         return False

@@ -13,25 +13,25 @@ from selenium.common.exceptions import (
     StaleElementReferenceException, NoSuchElementException, ElementNotInteractableException,
     NoSuchWindowException
 )
-import tempfile
 from helpers import wait_query_done
 from ultils import *
 
 
-USERNAME = os.getenv("MPLIS_USERNAME", "")
-PASSWORD = os.getenv("MPLIS_PASSWORD", "")
+USERNAME = "SDSA"
+PASSWORD = "SDS"
 URL = "https://dla.mplis.gov.vn/dc/DonDangKy/KeKhaiDangKyV2"
 MAXA = "24121"
 SOTO = "1"
-SOTHUA = "12"
+SOTHUA = "3002"
 LOAIDAT = "DGT"
+FILE_PATH = r"G:\My Drive\Congviec\TOKSNV\KH2959\NHOM1\TANLAP\TEST2\CHUACOGIAY_24121_DGT_1-GT.pdf"
 
 options = Options()
 options.add_argument("--start-maximized")
 options.add_argument("--window-position=100,100")
 options.add_argument("--window-size=1400,900")
-driver_path = r"D:\Soft\CHROMEDRIVER\chromedriver-win64\chromedriver-win64\chromedriver.exe"
-service = Service(driver_path)
+# driver_path = r"D:\Soft\CHROMEDRIVER\chromedriver-win64\chromedriver-win64\chromedriver.exe"
+service = Service(ChromeDriverManager().install())
 driver = webdriver.Chrome(service=service, options=options)
 wait = WebDriverWait(driver, 20)
 
@@ -80,6 +80,23 @@ if so_ban_ghi:
             timeout=30
         )
 
+    upload_file_theo_mo_ta_trong_add_hosoquet(
+        driver=driver,
+        modal_add_hsq=modal_add_hsq,
+        maxa=MAXA,
+        loaidat=LOAIDAT,
+        file_path=FILE_PATH,
+        timeout=30
+    )
+    cap_nhat_va_dong_modal_hosoquet(
+        driver=driver,
+        modal_add_hsq=modal_add_hsq,
+        timeout=30
+    )
+    bo_don_dang_ky(
+    driver=driver,
+    timeout=30
+    )
 else:
     print("⚠️ Không tìm thấy bản ghi nào.")
 
