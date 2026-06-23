@@ -168,8 +168,8 @@ session = tao_session_tu_selenium(driver)
 result = tim_to_thua(
     session=session,
     xa_id=24133,
-    so_to=364,
-    so_thua=158
+    so_to=9,
+    so_thua=64
 )
 
 print(json.dumps(result, ensure_ascii=False, indent=2))

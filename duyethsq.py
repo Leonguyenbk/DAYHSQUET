@@ -1,15 +1,16 @@
-# -*- coding: utf-8 -*-
-
 import os
 import sys
 import json
 import uuid
+import copy
+import re
 import queue
 import threading
 import traceback
+import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
@@ -29,6 +30,8 @@ REFERER_URL = "https://dla.mplis.gov.vn/dc/DonDangKy/KeKhaiDangKyV2"
 
 API_SEARCH_HOSOQUET = "https://dla.mplis.gov.vn/dc/QuanLyKhoHoSoQuetAjax/SearchHoSoQuet"
 API_UPDATE_HOSOQUET = "https://dla.mplis.gov.vn/dc/HoSoQuetAjax/UpdateHoSoQuetExistFile"
+URL_GET_THONG_TIN_DANG_KY = "https://dla.mplis.gov.vn/dc/DangKyAjax/GetThongTinDangKyByTinhHinhDangKyIds"
+URL_UPDATE_THONG_TIN_DANG_KY = "https://dla.mplis.gov.vn/dc/DangKyAjax/UpdateThongTinDangKy"
 
 # True = chỉ kiểm tra, không update thật
 # False = update thật
@@ -36,6 +39,10 @@ DRY_RUN = False
 
 # Số luồng xử lý song song (tăng nếu server chịu được, giảm nếu bị rate-limit)
 MAX_WORKERS = 3
+API_SEARCH_TIMEOUT = 120
+API_UPDATE_TIMEOUT = 180
+API_SEARCH_RETRIES = 3
+API_RETRY_BACKOFF_SECONDS = 5
 
 # Ghi Excel sau mỗi N dòng (thay vì mỗi dòng)
 WRITE_EVERY_N = 10
@@ -115,7 +122,7 @@ def ghi_excel_output(rows, output_path, lock):
         headers = [
             "STT", "Dòng Excel", "Số tờ", "Số thửa", "Loại đất", "Tên file",
             "Mô tả mới", "tinhHinhDangKyId", "hoSoQuetId", "thongTinHoSoId",
-            "Chủ sử dụng", "Diện tích", "Trạng thái", "Ghi chú"
+            "Chủ sử dụng", "Trạng thái", "Ghi chú"
         ]
         ws.append(headers)
 
@@ -135,7 +142,6 @@ def ghi_excel_output(rows, output_path, lock):
                 r.get("hoSoQuetId"),
                 r.get("thongTinHoSoId"),
                 r.get("chu_su_dung"),
-                r.get("dien_tich"),
                 r.get("status"),
                 r.get("note"),
             ])
@@ -191,6 +197,8 @@ def tao_session_tu_selenium(driver):
         "Origin": "https://dla.mplis.gov.vn",
         "Referer": REFERER_URL,
         "__requestverificationtoken": token,
+        "__RequestVerificationToken": token,
+        "RequestVerificationToken": token,
     })
 
     for c in driver.get_cookies():
@@ -264,6 +272,238 @@ def login_mplis(username, password):
     return driver
 
 
+
+# =========================
+# API: GET + UPDATE THÔNG TIN ĐĂNG KÝ
+# =========================
+
+def dotnet_date_to_iso(value):
+    """
+    Chuyển /Date(1780843978377)/ sang ISO UTC: 2026-06-07T14:52:58.377Z.
+    Nếu không phải /Date(...)/ thì giữ nguyên.
+    """
+    if not isinstance(value, str):
+        return value
+
+    m = re.search(r"/Date\((-?\d+)\)/", value)
+    if not m:
+        return value
+
+    ms = int(m.group(1))
+    dt = datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
+    return dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{int(dt.microsecond / 1000):03d}Z"
+
+
+def convert_dates_recursive(obj):
+    """Convert toàn bộ ngày /Date(...)/ trong dict/list sang ISO."""
+    if isinstance(obj, dict):
+        return {k: convert_dates_recursive(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [convert_dates_recursive(x) for x in obj]
+    return dotnet_date_to_iso(obj)
+
+
+def ddmmyyyy_to_iso_utc_start_of_day_vn(date_str):
+    """
+    Nhập dd/mm/yyyy theo ngày Việt Nam.
+    Ví dụ 23/04/2026 -> 2026-04-22T17:00:00.000Z.
+    """
+    date_str = str(date_str).strip()
+    dt_vn = datetime.strptime(date_str, "%d/%m/%Y")
+    tz_vn = timezone(timedelta(hours=7))
+    dt_vn = dt_vn.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=tz_vn)
+    dt_utc = dt_vn.astimezone(timezone.utc)
+    return dt_utc.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+def lay_thong_tin_dang_ky_by_id(session, tinh_hinh_dang_ky_id, token=None):
+    """
+    Lấy thông tin đăng ký từ tinhHinhDangKyId.
+    F12: JSON raw body {"tinhHinhDangKyIds": [id], "getHoSoQuet": false}
+    """
+    tid = safe_int(tinh_hinh_dang_ky_id, 0)
+    if not tid:
+        return {"ok": False, "error": f"tinhHinhDangKyId không hợp lệ: {tinh_hinh_dang_ky_id}"}
+
+    headers = dict(session.headers)
+    headers.update({
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "Content-Type": "application/json; charset=UTF-8",
+        "X-Requested-With": "XMLHttpRequest",
+        "Referer": REFERER_URL,
+        "Origin": "https://dla.mplis.gov.vn",
+    })
+
+    if token:
+        headers["__RequestVerificationToken"] = token
+        headers["RequestVerificationToken"] = token
+        headers["__requestverificationtoken"] = token
+
+    payload = {
+        "tinhHinhDangKyIds": [tid],
+        "getHoSoQuet": False,
+    }
+
+    res, request_error = post_retry(
+        session,
+        URL_GET_THONG_TIN_DANG_KY,
+        retries=API_SEARCH_RETRIES,
+        timeout=API_SEARCH_TIMEOUT,
+        data=json.dumps(payload, ensure_ascii=False),
+        headers=headers
+    )
+    if request_error:
+        return {"ok": False, "error": request_error}
+
+    print("=" * 80)
+    print("GET THÔNG TIN ĐĂNG KÝ")
+    print("ID:", tid)
+    print("PAYLOAD:", json.dumps(payload, ensure_ascii=False))
+    print("STATUS:", getattr(res, "status_code", ""))
+    print("TEXT:", getattr(res, "text", "")[:1000])
+
+    try:
+        js = res.json()
+    except Exception:
+        return {
+            "ok": False,
+            "error": f"Response GetThongTinDangKy không phải JSON: {res.text[:1000]}",
+            "status_code": res.status_code
+        }
+
+    if not js.get("success"):
+        return {
+            "ok": False,
+            "error": f"GetThongTinDangKy success=false với tinhHinhDangKyId={tid}. Response={str(js)[:1000]}",
+            "raw": js
+        }
+
+    if not js.get("value"):
+        return {
+            "ok": False,
+            "error": f"Không lấy được value từ tinhHinhDangKyId={tid}. Response={str(js)[:1000]}",
+            "raw": js
+        }
+
+    return {"ok": True, "raw": js}
+
+
+def build_payload_update_quyen_quan_ly(response_json, ngay_dang_ky_lan_dau_ddmmyyyy):
+    """
+    Giữ nguyên toàn bộ value[0], chỉ sửa:
+      - TinhHinhDangKy.coQuyenQuanLy = True
+      - TinhHinhDangKy.thoiDiemDangKyLanDau = ngày nhập UI convert ISO UTC
+    """
+    if not response_json.get("value"):
+        raise Exception("Response không có value để build payload UpdateThongTinDangKy")
+
+    value0 = copy.deepcopy(response_json["value"][0])
+
+    if isinstance(value0, dict) and "thongTinDangKy" in value0 and isinstance(value0["thongTinDangKy"], dict):
+        thong_tin_dang_ky = value0["thongTinDangKy"]
+    else:
+        thong_tin_dang_ky = value0
+
+    thong_tin_dang_ky = convert_dates_recursive(thong_tin_dang_ky)
+
+    if "TinhHinhDangKy" not in thong_tin_dang_ky or not isinstance(thong_tin_dang_ky["TinhHinhDangKy"], dict):
+        raise Exception("Payload không có TinhHinhDangKy, không thể update.")
+
+    thong_tin_dang_ky["TinhHinhDangKy"]["coQuyenQuanLy"] = True
+    thong_tin_dang_ky["TinhHinhDangKy"]["thoiDiemDangKyLanDau"] = ddmmyyyy_to_iso_utc_start_of_day_vn(
+        ngay_dang_ky_lan_dau_ddmmyyyy
+    )
+
+    return thong_tin_dang_ky
+
+
+def _response_update_ok(js):
+    if not isinstance(js, dict):
+        return False
+    if js.get("success") is True or js.get("Success") is True or js.get("ok") is True:
+        return True
+    if "success" not in js and "error" not in js and "Error" not in js:
+        return True
+    return False
+
+
+def api_update_thong_tin_dang_ky(session, tinh_hinh_dang_ky_id, ngay_dang_ky_lan_dau_ddmmyyyy):
+    """
+    Update ngày đăng ký lần đầu + Có quyền quản lý đất cho đúng tinhHinhDangKyId của từng dòng.
+    """
+    res_get = lay_thong_tin_dang_ky_by_id(session, tinh_hinh_dang_ky_id)
+    if not res_get.get("ok"):
+        return {"ok": False, "error": "GET thông tin đăng ký lỗi: " + res_get.get("error", "")}
+
+    try:
+        thong_tin_dang_ky = build_payload_update_quyen_quan_ly(
+            res_get["raw"],
+            ngay_dang_ky_lan_dau_ddmmyyyy
+        )
+    except Exception as e:
+        return {"ok": False, "error": "Build payload UpdateThongTinDangKy lỗi: " + str(e)}
+
+    headers_json = dict(session.headers)
+    headers_json.update({
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "Content-Type": "application/json; charset=UTF-8",
+        "X-Requested-With": "XMLHttpRequest",
+        "Referer": REFERER_URL,
+        "Origin": "https://dla.mplis.gov.vn",
+    })
+
+    payloads = [
+        ("json_wrapper_thongTinDangKy", {"thongTinDangKy": thong_tin_dang_ky}),
+        ("json_raw_thongTinDangKy_core", thong_tin_dang_ky),
+    ]
+
+    last_text = ""
+    last_js = None
+
+    for mode, payload in payloads:
+        try:
+            with open(f"debug_UpdateThongTinDangKy_{mode}.json", "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+        try:
+            res = session.post(
+                URL_UPDATE_THONG_TIN_DANG_KY,
+                data=json.dumps(payload, ensure_ascii=False),
+                headers=headers_json,
+                timeout=API_UPDATE_TIMEOUT
+            )
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+            last_text = f"Timeout/lỗi mạng khi UpdateThongTinDangKy ({mode}): {e}"
+            continue
+        except requests.exceptions.RequestException as e:
+            last_text = f"Lỗi request UpdateThongTinDangKy ({mode}): {e}"
+            continue
+
+        print("=" * 80)
+        print("UPDATE THÔNG TIN ĐĂNG KÝ")
+        print("MODE:", mode)
+        print("STATUS:", res.status_code)
+        print("TEXT:", res.text[:1000])
+
+        last_text = res.text[:1000]
+        try:
+            js = res.json()
+        except Exception:
+            js = None
+        last_js = js
+
+        if res.ok and _response_update_ok(js):
+            return {"ok": True, "raw": js, "sent_as": mode}
+
+    return {
+        "ok": False,
+        "error": "UpdateThongTinDangKy không thành công. "
+                 f"Phản hồi cuối: {last_js if last_js is not None else last_text}",
+        "payload_core": thong_tin_dang_ky
+    }
+
 # =========================
 # API: SEARCH HỒ SƠ QUÉT
 # =========================
@@ -313,16 +553,36 @@ def tao_payload_search_hosoquet(xa_id, so_to, so_thua):
     }
 
 
+def post_retry(session, url, *, retries, timeout, **kwargs):
+    last_error = None
+
+    for attempt in range(1, retries + 1):
+        try:
+            return session.post(url, timeout=timeout, **kwargs), None
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+            last_error = e
+            if attempt < retries:
+                time.sleep(API_RETRY_BACKOFF_SECONDS * attempt)
+        except requests.exceptions.RequestException as e:
+            return None, f"Loi request API: {e}"
+
+    return None, f"Timeout/loi mang sau {retries} lan thu: {last_error}"
+
+
 def api_search_hosoquet(session, xa_id, so_to, so_thua):
     headers = dict(session.headers)
     headers["Content-Type"] = "application/x-www-form-urlencoded; charset=UTF-8"
 
-    res = session.post(
+    res, request_error = post_retry(
+        session,
         API_SEARCH_HOSOQUET,
+        retries=API_SEARCH_RETRIES,
+        timeout=API_SEARCH_TIMEOUT,
         data=tao_payload_search_hosoquet(xa_id, so_to, so_thua),
-        headers=headers,
-        timeout=60
+        headers=headers
     )
+    if request_error:
+        return {"ok": False, "error": request_error}
 
     try:
         result = res.json()
@@ -403,6 +663,19 @@ def lay_dien_tich(item):
     return ""
 
 
+def get_tinh_hinh_id_from_item_hoso(item, hoso):
+    """Ưu tiên ID trong ThongTinDangKy.TinhHinhDangKy vì đây là ID đăng ký thật."""
+    thong_tin = item.get("ThongTinDangKy") or {}
+    tinh_hinh = thong_tin.get("TinhHinhDangKy") or {}
+
+    tid = tinh_hinh.get("tinhHinhDangKyId")
+    if not tid:
+        tid = hoso.get("tinhHinhDangKyId")
+    if not tid:
+        tid = hoso.get("Title")
+    return tid
+
+
 def tim_hosoquet_tu_search(raw_search, uu_tien_chuacogiay=True):
     data = raw_search.get("data") or []
 
@@ -421,7 +694,7 @@ def tim_hosoquet_tu_search(raw_search, uu_tien_chuacogiay=True):
                         return {
                             "info": {
                                 "thongTinHoSoId":   hoso.get("thongTinHoSoId"),
-                                "tinhHinhDangKyId": hoso.get("tinhHinhDangKyId") or tinh_hinh.get("tinhHinhDangKyId"),
+                                "tinhHinhDangKyId": get_tinh_hinh_id_from_item_hoso(item, hoso),
                                 "xaId":             hoso.get("xaId") or tinh_hinh.get("xaId"),
                             },
                             "hoso": hoso, "file": f, "item": item
@@ -432,7 +705,7 @@ def tim_hosoquet_tu_search(raw_search, uu_tien_chuacogiay=True):
             return {
                 "info": {
                     "thongTinHoSoId":   hoso.get("thongTinHoSoId"),
-                    "tinhHinhDangKyId": hoso.get("tinhHinhDangKyId") or tinh_hinh.get("tinhHinhDangKyId"),
+                    "tinhHinhDangKyId": get_tinh_hinh_id_from_item_hoso(item, hoso),
                     "xaId":             hoso.get("xaId") or tinh_hinh.get("xaId"),
                 },
                 "hoso": hoso, "file": None, "item": item
@@ -537,13 +810,24 @@ def api_update_hosoquet_exist_file(session, file_path, found_hosoquet, mo_ta_moi
                 "application/pdf"
             )
         }
-        res = session.post(
-            API_UPDATE_HOSOQUET,
-            data=data,
-            files=files,
-            headers=headers,
-            timeout=180
-        )
+        try:
+            res = session.post(
+                API_UPDATE_HOSOQUET,
+                data=data,
+                files=files,
+                headers=headers,
+                timeout=API_UPDATE_TIMEOUT
+            )
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+            return {
+                "ok": False,
+                "error": f"Timeout/loi mang khi update/upload: {e}"
+            }
+        except requests.exceptions.RequestException as e:
+            return {
+                "ok": False,
+                "error": f"Loi request API khi update/upload: {e}"
+            }
 
     try:
         result = res.json()
@@ -586,7 +870,7 @@ def kiem_tra_sau_update_bang_search(session, xa_id, so_to, so_thua, mo_ta_moi):
 # XỬ LÝ 1 DÒNG
 # =========================
 
-def xu_ly_1_dong(session, item, maxa, folder_upload, logger):
+def xu_ly_1_dong(session, item, maxa, folder_upload, ngay_dang_ky_lan_dau, logger, progress_cb=None):
     row_excel = item["row"]
     soto      = item["soto"]
     sothua    = item["sothua"]
@@ -612,26 +896,41 @@ def xu_ly_1_dong(session, item, maxa, folder_upload, logger):
         "note":             ""
     }
 
+    def progress(percent, text):
+        """Báo tiến độ riêng của dòng hiện tại cho worker đang xử lý."""
+        if progress_cb:
+            progress_cb(percent, text)
+
     def done(icon, status, note):
         result_row["status"] = status
         result_row["note"]   = note
         logger.log(f"{icon} Dòng {row_excel}: {note}")
         return result_row
 
+    # 0% → bắt đầu dòng
+    progress(0, "Bắt đầu")
+
+    # 10% → kiểm tra file PDF
+    progress(10, "Kiểm tra file PDF")
     if not os.path.isfile(file_path):
+        progress(100, "Lỗi file")
         return done("❌", "Lỗi", f"Không tìm thấy file: {file_path}")
 
-    # 1. Search
+    # 25% → Search
+    progress(25, "Đang search hồ sơ quét")
     res_search = api_search_hosoquet(session, xa_id=maxa, so_to=soto, so_thua=sothua)
     if not res_search.get("ok"):
+        progress(100, "Search lỗi")
         return done("❌", "Lỗi", "Search lỗi: " + res_search.get("error", ""))
 
     item_search               = res_search["item"]
     result_row["chu_su_dung"] = lay_chu_su_dung(item_search)
-    result_row["dien_tich"]   = lay_dien_tich(item_search)
 
+    # 45% → parse kết quả search
+    progress(45, "Đã tìm thấy hồ sơ")
     found = tim_hosoquet_tu_search(res_search["raw"])
     if not found:
+        progress(100, "Không tìm thấy HSQ phù hợp")
         return done("⚠️", "Lỗi", "Không tìm thấy ListHoSoQuet phù hợp")
 
     info = found["info"]
@@ -639,17 +938,27 @@ def xu_ly_1_dong(session, item, maxa, folder_upload, logger):
 
     result_row["hoSoQuetId"]       = hoso.get("hoSoQuetId")       or hoso.get("Title")
     result_row["thongTinHoSoId"]   = hoso.get("thongTinHoSoId")   or info.get("thongTinHoSoId")
-    result_row["tinhHinhDangKyId"] = hoso.get("tinhHinhDangKyId") or info.get("tinhHinhDangKyId")
+    result_row["tinhHinhDangKyId"] = info.get("tinhHinhDangKyId") or hoso.get("tinhHinhDangKyId")
 
-    # 2. Kiểm tra file thật
+    logger.log(
+        f"🔎 ID lấy được | tinhHinhDangKyId={result_row['tinhHinhDangKyId']} | "
+        f"hoSoQuetId={result_row['hoSoQuetId']} | thongTinHoSoId={result_row['thongTinHoSoId']} | "
+        f"tờ={soto} | thửa={sothua} | file={tenfile}"
+    )
+
+    # 55% → kiểm tra có file thật chưa
+    progress(55, "Kiểm tra file đã có")
     da_co_file_that, ghi_chu_file = co_file_khong_chuacogiay(hoso)
     if da_co_file_that:
+        progress(100, "Bỏ qua")
         return done("⏭️", "Bỏ qua", "Bỏ qua — đã có file: " + ghi_chu_file)
 
     if DRY_RUN:
+        progress(100, "DRY RUN")
         return done("🧪", "DRY_RUN", "DRY_RUN — chưa update thật")
 
-    # 3. Update
+    # 70% → Upload/update
+    progress(70, "Đang upload/update")
     res_update = api_update_hosoquet_exist_file(
         session=session,
         file_path=file_path,
@@ -657,9 +966,26 @@ def xu_ly_1_dong(session, item, maxa, folder_upload, logger):
         mo_ta_moi=mo_ta_moi
     )
     if not res_update.get("ok"):
-        return done("❌", "Lỗi", "Update lỗi: " + res_update.get("error", ""))
+        progress(100, "Update lỗi")
+        return done("❌", "Lỗi", "Update hồ sơ quét lỗi: " + res_update.get("error", ""))
 
-    # 4. Verify
+    # 82% → Update ngày đăng ký lần đầu + Có quyền quản lý đất cho từng thửa/đơn đăng ký
+    progress(82, "Đang cập nhật ngày ĐK + quyền quản lý")
+    res_update_ttdk = api_update_thong_tin_dang_ky(
+        session=session,
+        tinh_hinh_dang_ky_id=result_row["tinhHinhDangKyId"],
+        ngay_dang_ky_lan_dau_ddmmyyyy=ngay_dang_ky_lan_dau
+    )
+    if not res_update_ttdk.get("ok"):
+        progress(100, "Update TTĐK lỗi")
+        return done(
+            "❌",
+            "Lỗi",
+            "Upload hồ sơ quét OK nhưng UpdateThongTinDangKy lỗi: " + res_update_ttdk.get("error", "")
+        )
+
+    # 90% → Verify
+    progress(90, "Đang kiểm tra lại")
     ok_check, _ = kiem_tra_sau_update_bang_search(
         session=session,
         xa_id=maxa,
@@ -669,16 +995,17 @@ def xu_ly_1_dong(session, item, maxa, folder_upload, logger):
     )
 
     if ok_check:
+        progress(100, "Hoàn thành")
         return done("✅", "Thành công", "Cập nhật thành công")
     else:
+        progress(100, "Cần kiểm tra")
         return done("⚠️", "Cần kiểm tra", "Cần kiểm tra lại")
-
 
 # =========================
 # WORKER (chạy trong thread riêng)
 # =========================
 
-def worker_run(username, password, maxa, excel_path, folder_upload, log_queue):
+def worker_run(username, password, maxa, ngay_dang_ky_lan_dau, excel_path, folder_upload, log_queue):
     logger = ThreadSafeLogger(log_queue)
     driver = None
 
@@ -689,11 +1016,20 @@ def worker_run(username, password, maxa, excel_path, folder_upload, log_queue):
             logger.log("❌ Excel không có dữ liệu.")
             return
 
+        # Kiểm tra ngày nhập từ UI
+        try:
+            ngay_iso_test = ddmmyyyy_to_iso_utc_start_of_day_vn(ngay_dang_ky_lan_dau)
+        except Exception:
+            raise RuntimeError("Ngày đăng ký lần đầu không đúng định dạng dd/mm/yyyy. Ví dụ: 23/04/2026")
+
         tong = len(data)
         logger.log(f"✅ Đọc Excel xong: {tong} dòng.")
+        logger.log(f"Ngày đăng ký lần đầu: {ngay_dang_ky_lan_dau} -> {ngay_iso_test}")
         logger.log(f"DRY_RUN={DRY_RUN} | MAX_WORKERS={MAX_WORKERS}")
-        logger.log("API search:  " + API_SEARCH_HOSOQUET)
-        logger.log("API update:  " + API_UPDATE_HOSOQUET)
+        logger.log("API search HSQ:  " + API_SEARCH_HOSOQUET)
+        logger.log("API update HSQ:  " + API_UPDATE_HOSOQUET)
+        logger.log("API get TTĐK:    " + URL_GET_THONG_TIN_DANG_KY)
+        logger.log("API update TTĐK: " + URL_UPDATE_THONG_TIN_DANG_KY)
 
         output_path = os.path.join(
             os.path.dirname(excel_path),
@@ -702,6 +1038,15 @@ def worker_run(username, password, maxa, excel_path, folder_upload, log_queue):
 
         driver  = login_mplis(username, password)
         session = tao_session_tu_selenium(driver)
+        thread_local = threading.local()
+
+        def get_thread_session():
+            if not hasattr(thread_local, "session"):
+                worker_session = requests.Session()
+                worker_session.headers.update(session.headers)
+                worker_session.cookies.update(session.cookies)
+                thread_local.session = worker_session
+            return thread_local.session
         logger.log("✅ Đã tạo session API.")
 
         # Thông báo UI khởi tạo progress bars
@@ -732,15 +1077,26 @@ def worker_run(username, password, maxa, excel_path, folder_upload, log_queue):
             nonlocal thanh_cong, bo_qua, that_bai, done_count
 
             w_idx = get_worker_idx()
-            log_queue.put({"type": "worker_start", "worker": w_idx, "row": item["row"]})
+            row_excel = item["row"]
+
+            def row_progress(percent, text):
+                log_queue.put({
+                    "type": "worker_row_progress",
+                    "worker": w_idx,
+                    "row": row_excel,
+                    "percent": percent,
+                    "text": text
+                })
 
             try:
                 kq = xu_ly_1_dong(
-                    session=session,
+                    session=get_thread_session(),
                     item=item,
                     maxa=maxa,
                     folder_upload=folder_upload,
-                    logger=logger
+                    ngay_dang_ky_lan_dau=ngay_dang_ky_lan_dau,
+                    logger=logger,
+                    progress_cb=row_progress
                 )
             except Exception as e:
                 traceback.print_exc()
@@ -781,8 +1137,6 @@ def worker_run(username, password, maxa, excel_path, folder_upload, log_queue):
                     "bo_qua":     bo_qua,
                     "that_bai":   that_bai,
                 })
-                log_queue.put({"type": "worker_done", "worker": w_idx})
-
                 if done_count % WRITE_EVERY_N == 0 or done_count == tong:
                     try:
                         ghi_excel_output(results, output_path, results_lock)
@@ -839,6 +1193,7 @@ class App(tk.Tk):
         self.var_username  = tk.StringVar()
         self.var_password  = tk.StringVar()
         self.var_maxa      = tk.StringVar()
+        self.var_ngay_dk   = tk.StringVar()
         self.var_excel     = tk.StringVar()
         self.var_folder    = tk.StringVar()
         self.var_workers   = tk.IntVar(value=MAX_WORKERS)
@@ -865,27 +1220,31 @@ class App(tk.Tk):
 
         ttk.Label(frame_top, text="Mã xã").grid(row=1, column=0, padx=5, pady=4, sticky="w")
         ttk.Entry(frame_top, textvariable=self.var_maxa, width=20).grid(row=1, column=1, padx=5, pady=4, sticky="w")
-        ttk.Label(frame_top, text="Số luồng (workers)").grid(row=1, column=2, padx=5, pady=4, sticky="w")
-        ttk.Spinbox(frame_top, textvariable=self.var_workers, from_=1, to=10, width=6).grid(row=1, column=3, padx=5, pady=4, sticky="w")
+        ttk.Label(frame_top, text="Ngày ĐK lần đầu").grid(row=1, column=2, padx=5, pady=4, sticky="w")
+        ttk.Entry(frame_top, textvariable=self.var_ngay_dk, width=16).grid(row=1, column=3, padx=5, pady=4, sticky="w")
+        ttk.Label(frame_top, text="dd/mm/yyyy", foreground="gray").grid(row=1, column=4, padx=0, pady=4, sticky="w")
+
+        ttk.Label(frame_top, text="Số luồng (workers)").grid(row=2, column=0, padx=5, pady=4, sticky="w")
+        ttk.Spinbox(frame_top, textvariable=self.var_workers, from_=1, to=10, width=6).grid(row=2, column=1, padx=5, pady=4, sticky="w")
         ttk.Checkbutton(frame_top, text="DRY RUN (chỉ kiểm tra, không update)", variable=self.var_dry_run).grid(
-            row=1, column=4, padx=10, pady=4, sticky="w"
+            row=2, column=2, columnspan=3, padx=10, pady=4, sticky="w"
         )
 
-        ttk.Label(frame_top, text="File Excel").grid(row=2, column=0, padx=5, pady=4, sticky="w")
-        ttk.Entry(frame_top, textvariable=self.var_excel, width=90).grid(row=2, column=1, columnspan=3, padx=5, pady=4, sticky="we")
-        ttk.Button(frame_top, text="Duyệt", command=self.browse_excel).grid(row=2, column=4, padx=5, pady=4)
+        ttk.Label(frame_top, text="File Excel").grid(row=3, column=0, padx=5, pady=4, sticky="w")
+        ttk.Entry(frame_top, textvariable=self.var_excel, width=90).grid(row=3, column=1, columnspan=3, padx=5, pady=4, sticky="we")
+        ttk.Button(frame_top, text="Duyệt", command=self.browse_excel).grid(row=3, column=4, padx=5, pady=4)
 
-        ttk.Label(frame_top, text="Folder PDF").grid(row=3, column=0, padx=5, pady=4, sticky="w")
-        ttk.Entry(frame_top, textvariable=self.var_folder, width=90).grid(row=3, column=1, columnspan=3, padx=5, pady=4, sticky="we")
-        ttk.Button(frame_top, text="Duyệt", command=self.browse_folder).grid(row=3, column=4, padx=5, pady=4)
+        ttk.Label(frame_top, text="Folder PDF").grid(row=4, column=0, padx=5, pady=4, sticky="w")
+        ttk.Entry(frame_top, textvariable=self.var_folder, width=90).grid(row=4, column=1, columnspan=3, padx=5, pady=4, sticky="we")
+        ttk.Button(frame_top, text="Duyệt", command=self.browse_folder).grid(row=4, column=4, padx=5, pady=4)
 
         self.btn_start = ttk.Button(frame_top, text="▶  BẮT ĐẦU CHẠY", command=self.start_run)
-        self.btn_start.grid(row=4, column=1, padx=5, pady=8, sticky="w")
+        self.btn_start.grid(row=5, column=1, padx=5, pady=8, sticky="w")
         self.btn_clear = ttk.Button(frame_top, text="Xóa log", command=self.clear_log)
-        self.btn_clear.grid(row=4, column=2, padx=5, pady=8, sticky="w")
+        self.btn_clear.grid(row=5, column=2, padx=5, pady=8, sticky="w")
 
         ttk.Label(frame_top, text="Excel cần cột: soto | sothua | loaidat | tenfile",
-                  foreground="blue").grid(row=5, column=0, columnspan=5, padx=5, pady=3, sticky="w")
+                  foreground="blue").grid(row=6, column=0, columnspan=5, padx=5, pady=3, sticky="w")
         frame_top.columnconfigure(3, weight=1)
 
         # ── Progress section ───────────────────────────────────────────────
@@ -935,7 +1294,7 @@ class App(tk.Tk):
             lbl = ttk.Label(self.frame_progress, text=f"Worker {i+1}:", width=12, anchor="w")
             lbl.grid(row=row_idx, column=0, padx=6, pady=2, sticky="w")
 
-            pb = ttk.Progressbar(self.frame_progress, length=600, mode="determinate", maximum=total)
+            pb = ttk.Progressbar(self.frame_progress, length=600, mode="determinate", maximum=100)
             pb.grid(row=row_idx, column=1, padx=6, pady=2, sticky="we")
 
             lbl_status = ttk.Label(self.frame_progress, text="Chờ...", width=32, foreground="gray")
@@ -943,8 +1302,7 @@ class App(tk.Tk):
 
             self._worker_rows.append((lbl, pb, lbl_status))
 
-        # Đếm số dòng mỗi worker đã xong (để tính % của worker)
-        self._worker_done = [0] * n_workers
+        # Worker progress chỉ là % của dòng đang xử lý, không phải % toàn trình.
 
     def browse_excel(self):
         path = filedialog.askopenfilename(
@@ -971,6 +1329,14 @@ class App(tk.Tk):
             return False
         if not self.var_maxa.get().strip():
             messagebox.showerror("Thiếu thông tin", "Chưa nhập mã xã.")
+            return False
+        if not self.var_ngay_dk.get().strip():
+            messagebox.showerror("Thiếu thông tin", "Chưa nhập ngày đăng ký lần đầu.")
+            return False
+        try:
+            ddmmyyyy_to_iso_utc_start_of_day_vn(self.var_ngay_dk.get().strip())
+        except Exception:
+            messagebox.showerror("Sai định dạng", "Ngày đăng ký lần đầu phải là dd/mm/yyyy. Ví dụ: 23/04/2026")
             return False
         if not os.path.isfile(self.var_excel.get().strip()):
             messagebox.showerror("Sai đường dẫn", "File Excel không tồn tại.")
@@ -999,6 +1365,7 @@ class App(tk.Tk):
                 self.var_username.get().strip(),
                 self.var_password.get().strip(),
                 self.var_maxa.get().strip(),
+                self.var_ngay_dk.get().strip(),
                 self.var_excel.get().strip(),
                 self.var_folder.get().strip(),
                 self.log_queue,
@@ -1019,22 +1386,29 @@ class App(tk.Tk):
                     if t == "init":
                         self._init_progress(msg["total"], msg["workers"])
 
-                    elif t == "worker_start":
+                    elif t == "worker_row_progress":
                         w = msg["worker"] - 1   # 0-based index
                         row = msg["row"]
-                        if w < len(self._worker_rows):
-                            _, pb, lbl_s = self._worker_rows[w]
-                            lbl_s.config(text=f"⏳ Dòng {row}...", foreground="blue")
+                        percent = int(msg.get("percent", 0))
+                        text = msg.get("text", "")
 
-                    elif t == "worker_done":
-                        w = msg["worker"] - 1
+                        # Chặn giá trị ngoài 0..100
+                        percent = max(0, min(100, percent))
+
                         if w < len(self._worker_rows):
-                            self._worker_done[w] += 1
-                            done_w = self._worker_done[w]
                             _, pb, lbl_s = self._worker_rows[w]
-                            pb.config(value=done_w)
-                            pct = int(done_w / self._total * 100) if self._total else 0
-                            lbl_s.config(text=f"✅ {done_w} dòng ({pct}%)", foreground="green")
+                            pb.config(value=percent)
+
+                            if percent >= 100:
+                                lbl_s.config(
+                                    text=f"✅ Dòng {row} — {percent}% — {text}",
+                                    foreground="green"
+                                )
+                            else:
+                                lbl_s.config(
+                                    text=f"⏳ Dòng {row} — {percent}% — {text}",
+                                    foreground="blue"
+                                )
 
                     elif t == "progress":
                         done  = msg["done"]
