@@ -1,0 +1,65 @@
+{
+  "soThuTuThua": 4000,
+  "soHieuToBanDo": 2,
+  "dienTich": 621.3,
+  "dienTichPhapLy": "621.3",
+  "soThuTuThuaCu": "",
+  "soHieuToBanDoCu": "",
+  "loaiThuaDat": "",
+  "quaTrinhSuDung": "",
+  "inSoLieuCu": false,
+  "lichSuHinhThanh": "",
+  "noiDungQuyHoach": "",
+  "ghiChuDienTich": "",
+  "ListMucDichSuDung": [
+    {
+      "loaiMucDichSuDungId": "SON",
+      "dienTich": 621.3,
+      "soThuTu": 1,
+      "ngayHinhThanh": null,
+      "ngaySuDung": null,
+      "loaiMucDichSuDungQuyHoachId": "0",
+      "mucDichSuDungChiTiet": "",
+      "thoiHanSuDung": "Lâu dài",
+      "loaiMucDichSuDungPhuId": "0",
+      "ghiChu": "",
+      "ListNguonGocSuDungDat": [
+        {
+          "loaiNguonGocSuDungDatId": "6",
+          "loaiNguonGocChuyenQuyenId": "0",
+          "dienTich": 621.3,
+          "chiTiet": ""
+        }
+      ],
+      "LoaiMucDichSuDung": {
+        "loaiMucDichSuDungId": "SON",
+        "kyHieuLoaiMucDichSuDung": null,
+        "tenLoaiMucDichSuDung": "Đất có mặt nước dạng sông, ngòi, kênh, rạch, suối",
+        "moTaLoaiMucDichSuDung": "SON (Đất có mặt nước dạng sông, ngòi, kênh, rạch, suối)",
+        "trangThai": true
+      },
+      "LoaiMucDichSuDungPhu": null
+    }
+  ],
+  "ListDiaChi": [
+    {
+      "tinhId": "66",
+      "huyenId": "0",
+      "xaId": "24175",
+      "duongId": "",
+      "ngoPho": "",
+      "soNha": "",
+      "toDanPhoId": "",
+      "laDiaChiChinh": false,
+      "laDiaChiCu": false,
+      "diaChiChiTiet": "Xã Hòa Phú, Tỉnh Đắk Lắk"
+    }
+  ],
+  "TaiLieuDoDac": null,
+  "diaChi": "Xã Hòa Phú, Tỉnh Đắk Lắk",
+  "tinhId": 66,
+  "huyenId": 0,
+  "xaId": "24175",
+  "duongDanSoDo": null,
+  "tenFileSoDo": null
+}
