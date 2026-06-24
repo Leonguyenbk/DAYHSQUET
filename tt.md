@@ -2131,3 +2131,17 @@ RESPONE
   "duongDanSoDo": null,
   "tenFileSoDo": null
 }
+# ADD HOSOQUET
+PAYLOAD
+hoSoQuet
+{"thongTinHoSoId":8324509,"TuiHoSo":null,"tuiHoSoId":0,"hoSoQuetId":0}
+fileHoSoQuet_1
+(binary)
+infoHoSoQuet_1
+{"loaiHoSoQuet":2,"laGiayToVeNguonGoc":true,"giayChungNhanId":"","moTa":"CHUACOGIAY_24175_SON-DDK","tenGiayTo":"","trichYeu":"","laGiayChungNhan":false,"__id":"0ac07bae-541e-4089-2d94-d73ed61b02e9","files":null}
+fileHoSoQuet_2
+(binary)
+infoHoSoQuet_2
+{"loaiHoSoQuet":1,"laGiayToVeNguonGoc":true,"giayChungNhanId":"","moTa":"","tenGiayTo":"","trichYeu":"","laGiayChungNhan":true,"__id":"ced4d522-18b1-400a-1ceb-010e113f1ac7","files":null}
+count
+2
