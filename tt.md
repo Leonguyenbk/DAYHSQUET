@@ -2145,3 +2145,97 @@ infoHoSoQuet_2
 {"loaiHoSoQuet":1,"laGiayToVeNguonGoc":true,"giayChungNhanId":"","moTa":"","tenGiayTo":"","trichYeu":"","laGiayChungNhan":true,"__id":"ced4d522-18b1-400a-1ceb-010e113f1ac7","files":null}
 count
 2
+# NHIEU MUC DICH SU DUNG
+{
+  "soThuTuThua": 672,
+  "soHieuToBanDo": 25,
+  "dienTich": 2597.7,
+  "dienTichPhapLy": "2597.7",
+  "soThuTuThuaCu": "",
+  "soHieuToBanDoCu": "",
+  "loaiThuaDat": "",
+  "quaTrinhSuDung": "",
+  "inSoLieuCu": false,
+  "lichSuHinhThanh": "",
+  "noiDungQuyHoach": "",
+  "ghiChuDienTich": "",
+  "ListMucDichSuDung": [
+    {
+      "loaiMucDichSuDungId": "SON",
+      "dienTich": 2597.7,
+      "soThuTu": 1,
+      "ngayHinhThanh": null,
+      "ngaySuDung": null,
+      "loaiMucDichSuDungQuyHoachId": "0",
+      "mucDichSuDungChiTiet": "",
+      "thoiHanSuDung": "Lâu dài",
+      "loaiMucDichSuDungPhuId": "0",
+      "ghiChu": "",
+      "ListNguonGocSuDungDat": [
+        {
+          "loaiNguonGocSuDungDatId": "6",
+          "loaiNguonGocChuyenQuyenId": "0",
+          "dienTich": 2597.7,
+          "chiTiet": ""
+        }
+      ],
+      "LoaiMucDichSuDung": {
+        "loaiMucDichSuDungId": "SON",
+        "kyHieuLoaiMucDichSuDung": null,
+        "tenLoaiMucDichSuDung": "Đất có mặt nước dạng sông, ngòi, kênh, rạch, suối",
+        "moTaLoaiMucDichSuDung": "SON (Đất có mặt nước dạng sông, ngòi, kênh, rạch, suối)",
+        "trangThai": true
+      },
+      "LoaiMucDichSuDungPhu": null
+    },
+    {
+      "loaiMucDichSuDungId": "BCS",
+      "dienTich": 200,
+      "soThuTu": 2,
+      "ngayHinhThanh": null,
+      "ngaySuDung": null,
+      "loaiMucDichSuDungQuyHoachId": "0",
+      "mucDichSuDungChiTiet": "",
+      "thoiHanSuDung": "",
+      "loaiMucDichSuDungPhuId": "0",
+      "ghiChu": "",
+      "ListNguonGocSuDungDat": [
+        {
+          "loaiNguonGocSuDungDatId": "0",
+          "loaiNguonGocChuyenQuyenId": "0",
+          "dienTich": 200,
+          "chiTiet": ""
+        }
+      ],
+      "LoaiMucDichSuDung": {
+        "loaiMucDichSuDungId": "BCS",
+        "kyHieuLoaiMucDichSuDung": null,
+        "tenLoaiMucDichSuDung": "Đất bằng chưa sử dụng",
+        "moTaLoaiMucDichSuDung": "BCS (Đất bằng chưa sử dụng)",
+        "trangThai": true
+      },
+      "LoaiMucDichSuDungPhu": null
+    }
+  ],
+  "ListDiaChi": [
+    {
+      "tinhId": "66",
+      "huyenId": "0",
+      "xaId": "24175",
+      "duongId": "",
+      "ngoPho": "",
+      "soNha": "",
+      "toDanPhoId": "",
+      "laDiaChiChinh": false,
+      "laDiaChiCu": false,
+      "diaChiChiTiet": "Xã Hòa Phú, Tỉnh Đắk Lắk"
+    }
+  ],
+  "TaiLieuDoDac": null,
+  "diaChi": "Xã Hòa Phú, Tỉnh Đắk Lắk",
+  "tinhId": 66,
+  "huyenId": 0,
+  "xaId": "24175",
+  "duongDanSoDo": null,
+  "tenFileSoDo": null
+}
