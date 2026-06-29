@@ -1,0 +1,1472 @@
+[
+  {
+    "xaId": 22021,
+    "ten": "Phường 2 (Thành phố Tuy Hoà cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22027,
+    "ten": "Phường 3 (Thành phố Tuy Hoà cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22030,
+    "ten": "Phường 4 (Thành phố Tuy Hoà cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22033,
+    "ten": "Phường 5 (Thành phố Tuy Hoà cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22039,
+    "ten": "Phường 6 (Thành phố Tuy Hoà cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22036,
+    "ten": "Phường 7 (Thành phố Tuy Hoà cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22018,
+    "ten": "Phường 8 (Thành phố Tuy Hoà cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22024,
+    "ten": "Phường 9 (Thành phố Tuy Hoà cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24308,
+    "ten": "Phường An Bình (Thị Xã Buôn Hồ cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24305,
+    "ten": "Phường Buôn Hồ (Phường An Lạc - Thị Xã Buôn Hồ cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24133,
+    "ten": "Phường Buôn Ma Thuột (Phường Thành Công - Thành phố Buôn Ma Thuột cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 22045,
+    "ten": "Phường Bình Kiến (Xã Bình Kiến - Thành phố Tuy Hoà cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24332,
+    "ten": "Phường Bình Tân (Thị Xã Buôn Hồ cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24340,
+    "ten": "Phường Cư Bao (Xã Cư Bao - Thị Xã Buôn Hồ cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24169,
+    "ten": "Phường Ea Kao (Xã Ea Kao - Thành phố Buôn Ma Thuột cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24151,
+    "ten": "Phường Ea Tam (Thành phố Buôn Ma Thuột cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22261,
+    "ten": "Phường Hòa Hiệp (Phường Hoà Hiệp Trung - Thị xã Đông Hòa cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 22246,
+    "ten": "Phường Hòa Hiệp Bắc (Thị xã Đông Hòa cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22282,
+    "ten": "Phường Hòa Hiệp Nam (Thị xã Đông Hòa cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22279,
+    "ten": "Phường Hòa Xuân Tây (Thị xã Đông Hòa cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22040,
+    "ten": "Phường Phú Thạnh (Thành phố Tuy Hoà cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22240,
+    "ten": "Phường Phú Yên (Phường Phú Lâm - Thành phố Tuy Hoà cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 22041,
+    "ten": "Phường Phú Đông (Thành phố Tuy Hoà cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22051,
+    "ten": "Phường Sông Cầu (Phường Xuân Phú - Thị xã Sông Cầu cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24311,
+    "ten": "Phường Thiện An (Thị Xã Buôn Hồ cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24139,
+    "ten": "Phường Thành Công (cũ) (Thành phố Buôn Ma Thuột cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24130,
+    "ten": "Phường Thành Nhất (Thành phố Buôn Ma Thuột cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24154,
+    "ten": "Phường Thành Nhất (Phường Khánh Xuân - Thành phố Buôn Ma Thuột cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24127,
+    "ten": "Phường Thống Nhất (Thành phố Buôn Ma Thuột cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24331,
+    "ten": "Phường Thống Nhất (Thị Xã Buôn Hồ cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22015,
+    "ten": "Phường Tuy Hòa (Phường 1 - Thành phố Tuy Hoà cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24124,
+    "ten": "Phường Tân An (Thành phố Buôn Ma Thuột cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24163,
+    "ten": "Phường Tân An (Xã Ea Tu - Thành phố Buôn Ma Thuột cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24118,
+    "ten": "Phường Tân Lập (Thành phố Buôn Ma Thuột cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24121,
+    "ten": "Phường Tân Lập (Phường Tân Hòa - Thành phố Buôn Ma Thuột cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24136,
+    "ten": "Phường Tân Lợi (Thành phố Buôn Ma Thuột cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24142,
+    "ten": "Phường Tân Thành (Thành phố Buôn Ma Thuột cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24145,
+    "ten": "Phường Tân Tiến (Thành phố Buôn Ma Thuột cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24148,
+    "ten": "Phường Tự An (Thành phố Buôn Ma Thuột cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22053,
+    "ten": "Phường Xuân Thành (Thị xã Sông Cầu cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22073,
+    "ten": "Phường Xuân Yên (Thị xã Sông Cầu cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22076,
+    "ten": "Phường Xuân Đài (Thị xã Sông Cầu cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24322,
+    "ten": "Phường Đoàn Kết (Thị Xã Buôn Hồ cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22258,
+    "ten": "Phường Đông Hòa (Phường Hoà Vinh - Thị xã Đông Hòa cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24318,
+    "ten": "Phường Đạt Hiếu (Thị Xã Buôn Hồ cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24256,
+    "ten": "Thị trấn Ea Pốk (Huyện Cư M'gar cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22156,
+    "ten": "Xã An Chấn (Huyện Tuy An cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22138,
+    "ten": "Xã An Cư (Huyện Tuy An cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22117,
+    "ten": "Xã An Dân (Huyện Tuy An cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22150,
+    "ten": "Xã An Hiệp (Huyện Tuy An cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22144,
+    "ten": "Xã An Lĩnh (Huyện Tuy An cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22123,
+    "ten": "Xã An Ninh Đông (Huyện Tuy An cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22162,
+    "ten": "Xã An Phú (Thành phố Tuy Hoà cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22126,
+    "ten": "Xã An Thạch (Huyện Tuy An cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22159,
+    "ten": "Xã An Thọ (Huyện Tuy An cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22141,
+    "ten": "Xã An Xuân (Huyện Tuy An cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22129,
+    "ten": "Xã An Định (Huyện Tuy An cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24592,
+    "ten": "Xã Buôn Triết (Huyện Lắk cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24235,
+    "ten": "Xã Buôn Đôn (Xã Krông Na - Huyện Buôn Đôn cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24574,
+    "ten": "Xã Bình Hòa (Huyện Krông Ana cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22048,
+    "ten": "Xã Bình Ngọc (Thành phố Tuy Hoà cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24337,
+    "ten": "Xã Bình Thuận (Thị Xã Buôn Hồ cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24586,
+    "ten": "Xã Bông Krang (Huyện Lắk cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24247,
+    "ten": "Xã Cuôr KNia (Huyện Buôn Đôn cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24301,
+    "ten": "Xã Cuôr Đăng (Xã Cuor Đăng - Huyện Cư M'gar cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 22180,
+    "ten": "Xã Cà Lúi (Huyện Sơn Hòa cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24194,
+    "ten": "Xã Cư A Mung (Huyện Ea H'leo cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24271,
+    "ten": "Xã Cư Dliê M'nông (Huyện Cư M'gar cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24404,
+    "ten": "Xã Cư ELang (Huyện Ea Kar cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24385,
+    "ten": "Xã Cư Huê (Huyện Ea Kar cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24439,
+    "ten": "Xã Cư K Róa (Huyện M'Đrắk cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24226,
+    "ten": "Xã Cư KBang (Huyện Ea Súp cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24367,
+    "ten": "Xã Cư Klông (Huyện Krông Năng cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24232,
+    "ten": "Xã Cư M'Lan (Huyện Ea Súp cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24289,
+    "ten": "Xã Cư M'gar (Huyện Cư M'gar cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24196,
+    "ten": "Xã Cư Mốt (Huyện Ea H'leo cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24280,
+    "ten": "Xã Cư M’gar (Xã Ea KPam - Huyện Cư M'gar cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24436,
+    "ten": "Xã Cư M’ta (Xã Cư M'ta - Huyện M'Đrắk cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24397,
+    "ten": "Xã Cư Ni (Huyện Ea Kar cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24307,
+    "ten": "Xã Cư Né (Huyện Krông Búk cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24415,
+    "ten": "Xã Cư Prao (Huyện M'Đrắk cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24401,
+    "ten": "Xã Cư Prông (Huyện Ea Kar cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24478,
+    "ten": "Xã Cư Pui (Huyện Krông Bông cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24313,
+    "ten": "Xã Cư Pơng (Huyện Krông Búk cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24298,
+    "ten": "Xã Cư Suê (Huyện Cư M'gar cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24406,
+    "ten": "Xã Cư Yang (Xã Cư Bông - Huyện Ea Kar cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24409,
+    "ten": "Xã Cư Yang (Huyện Ea Kar cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24541,
+    "ten": "Xã Cư Ê Wi (Huyện Cư Kuin cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24160,
+    "ten": "Xã Cư ÊBur (Thành phố Buôn Ma Thuột cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24451,
+    "ten": "Xã Dang Kang (Huyện Krông Bông cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24454,
+    "ten": "Xã Dang Kang (Xã Cư KTy - Huyện Krông Bông cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24346,
+    "ten": "Xã Dliê Ya (Xã ĐLiê Ya - Huyện Krông Năng cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24205,
+    "ten": "Xã Dliê Yang (Huyện Ea H'leo cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24561,
+    "ten": "Xã Dray Bhăng (Huyện Cư Kuin cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24556,
+    "ten": "Xã Dray Sáp (Huyện Krông Ana cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24571,
+    "ten": "Xã Dur KMăl (Huyện Krông Ana cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24568,
+    "ten": "Xã Dur Kmăl (Xã Băng A Drênh - Huyện Krông Ana cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24550,
+    "ten": "Xã Ea BHốk (Huyện Cư Kuin cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24325,
+    "ten": "Xã Ea Blang (Thị Xã Buôn Hồ cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24229,
+    "ten": "Xã Ea Bung (Huyện Ea Súp cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 22216,
+    "ten": "Xã Ea Bá (Huyện Sông Hinh cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22225,
+    "ten": "Xã Ea Bá (Xã EaBar - Huyện Sông Hinh cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24565,
+    "ten": "Xã Ea Bông (Huyện Krông Ana cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24292,
+    "ten": "Xã Ea D'Rơng (Huyện Cư M'gar cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24328,
+    "ten": "Xã Ea Drông (Thị Xã Buôn Hồ cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24181,
+    "ten": "Xã Ea Drăng (Thị trấn Ea Drăng - Huyện Ea H'leo cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24360,
+    "ten": "Xã Ea Dăh (Huyện Krông Năng cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24424,
+    "ten": "Xã Ea H'MLay (Huyện M'Đrắk cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24274,
+    "ten": "Xã Ea H'đing (Huyện Cư M'gar cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24187,
+    "ten": "Xã Ea Hiao (Xã Ea Sol - Huyện Ea H'leo cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24199,
+    "ten": "Xã Ea Hiao (Huyện Ea H'leo cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24520,
+    "ten": "Xã Ea Hiu (Huyện Krông Pắc cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24553,
+    "ten": "Xã Ea Hu (Huyện Cư Kuin cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24238,
+    "ten": "Xã Ea Huar (Huyện Buôn Đôn cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24361,
+    "ten": "Xã Ea Hồ (Huyện Krông Năng cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24184,
+    "ten": "Xã Ea H’Leo (Xã Ea H'leo - Huyện Ea H'leo cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24505,
+    "ten": "Xã Ea KNuếc (Huyện Krông Pắc cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24373,
+    "ten": "Xã Ea Kar (Thị trấn Ea Kar - Huyện Ea Kar cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24202,
+    "ten": "Xã Ea Khal (Huyện Ea H'leo cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24208,
+    "ten": "Xã Ea Khăl (Xã Ea Nam - Huyện Ea H'leo cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24265,
+    "ten": "Xã Ea Kiết (Huyện Cư M'gar cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24496,
+    "ten": "Xã Ea Kly (Huyện Krông Pắc cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24394,
+    "ten": "Xã Ea Kmút (Huyện Ea Kar cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24376,
+    "ten": "Xã Ea Knốp (Thị trấn Ea Knốp - Huyện Ea Kar cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24544,
+    "ten": "Xã Ea Ktur (Huyện Cư Kuin cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24264,
+    "ten": "Xã Ea Kuêh (Huyện Cư M'gar cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24514,
+    "ten": "Xã Ea Kuăng (Huyện Krông Pắc cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24499,
+    "ten": "Xã Ea Kênh (Huyện Krông Pắc cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24421,
+    "ten": "Xã Ea Lai (Huyện M'Đrắk cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22237,
+    "ten": "Xã Ea Ly (Xã Ealy - Huyện Sông Hinh cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 22210,
+    "ten": "Xã Ea Lâm (Huyện Sông Hinh cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24223,
+    "ten": "Xã Ea Lê (Huyện Ea Súp cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24430,
+    "ten": "Xã Ea M' Doal (Huyện M'Đrắk cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24283,
+    "ten": "Xã Ea M'DRóh (Huyện Cư M'gar cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24295,
+    "ten": "Xã Ea M'nang (Huyện Cư M'gar cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24286,
+    "ten": "Xã Ea M’Droh (Xã Quảng Hiệp - Huyện Cư M'gar cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24559,
+    "ten": "Xã Ea Na (Huyện Krông Ana cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24319,
+    "ten": "Xã Ea Ngai (Huyện Krông Búk cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24540,
+    "ten": "Xã Ea Ning (Huyện Cư Kuin cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24250,
+    "ten": "Xã Ea Nuôl (Xã Ea Bar - Huyện Buôn Đôn cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24253,
+    "ten": "Xã Ea Nuôl (Huyện Buôn Đôn cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24502,
+    "ten": "Xã Ea Phê (Huyện Krông Pắc cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24418,
+    "ten": "Xã Ea Pil (Huyện M'Đrắk cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24359,
+    "ten": "Xã Ea Puk (Huyện Krông Năng cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24400,
+    "ten": "Xã Ea Păl (Huyện Ea Kar cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24610,
+    "ten": "Xã Ea R'Bin (Huyện Lắk cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24190,
+    "ten": "Xã Ea Ral (Huyện Ea H'leo cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24433,
+    "ten": "Xã Ea Riêng (Huyện M'Đrắk cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24217,
+    "ten": "Xã Ea Rốk (Huyện Ea Súp cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24380,
+    "ten": "Xã Ea Sar (Huyện Ea Kar cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24314,
+    "ten": "Xã Ea Sin (Huyện Krông Búk cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24334,
+    "ten": "Xã Ea Siên (Thị Xã Buôn Hồ cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24379,
+    "ten": "Xã Ea Sô (Huyện Ea Kar cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24211,
+    "ten": "Xã Ea Súp (Thị trấn Ea Súp - Huyện Ea Súp cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24268,
+    "ten": "Xã Ea Tar (Huyện Cư M'gar cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24388,
+    "ten": "Xã Ea Tih (Huyện Ea Kar cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24207,
+    "ten": "Xã Ea Tir (Huyện Ea H'leo cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24547,
+    "ten": "Xã Ea Tiêu (Huyện Cư Kuin cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24445,
+    "ten": "Xã Ea Trang (Huyện M'Đrắk cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24277,
+    "ten": "Xã Ea Tul (Huyện Cư M'gar cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24370,
+    "ten": "Xã Ea Tân (Huyện Krông Năng cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24349,
+    "ten": "Xã Ea Tóh (Huyện Krông Năng cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24532,
+    "ten": "Xã Ea Uy (Huyện Krông Pắc cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24241,
+    "ten": "Xã Ea Wer (Huyện Buôn Đôn cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24193,
+    "ten": "Xã Ea Wy (Huyện Ea H'leo cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24535,
+    "ten": "Xã Ea Yiêng (Huyện Krông Pắc cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24508,
+    "ten": "Xã Ea Yông (Huyện Krông Pắc cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24403,
+    "ten": "Xã Ea Ô (Huyện Ea Kar cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24391,
+    "ten": "Xã Ea Đar (Huyện Ea Kar cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22228,
+    "ten": "Xã EaBia (Huyện Sông Hinh cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22231,
+    "ten": "Xã EaTrol (Huyện Sông Hinh cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22315,
+    "ten": "Xã Hòa An (Huyện Phú Hoà cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24511,
+    "ten": "Xã Hòa An (Huyện Krông Pắc cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22252,
+    "ten": "Xã Hòa Bình 1 (Huyện Tây Hoà cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24562,
+    "ten": "Xã Hòa Hiệp (Huyện Cư Kuin cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22309,
+    "ten": "Xã Hòa Hội (Huyện Phú Hoà cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22042,
+    "ten": "Xã Hòa Kiến (Thành phố Tuy Hoà cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24466,
+    "ten": "Xã Hòa Lễ (Huyện Krông Bông cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22285,
+    "ten": "Xã Hòa Mỹ (Xã Hòa Mỹ Đông - Huyện Tây Hoà cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 22288,
+    "ten": "Xã Hòa Mỹ Tây (Huyện Tây Hoà cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22264,
+    "ten": "Xã Hòa Phong (Huyện Tây Hoà cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24463,
+    "ten": "Xã Hòa Phong (Huyện Krông Bông cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22270,
+    "ten": "Xã Hòa Phú (Huyện Tây Hoà cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24172,
+    "ten": "Xã Hòa Phú (Thành phố Buôn Ma Thuột cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24175,
+    "ten": "Xã Hòa Phú (Xã Hòa Khánh - Thành phố Buôn Ma Thuột cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 22306,
+    "ten": "Xã Hòa Quang Nam (Huyện Phú Hoà cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24472,
+    "ten": "Xã Hòa Sơn (Xã Ea Trul - Huyện Krông Bông cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24481,
+    "ten": "Xã Hòa Sơn (Huyện Krông Bông cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24157,
+    "ten": "Xã Hòa Thuận (Thành phố Buôn Ma Thuột cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22243,
+    "ten": "Xã Hòa Thành (Thị xã Đông Hòa cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24457,
+    "ten": "Xã Hòa Thành (Huyện Krông Bông cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22324,
+    "ten": "Xã Hòa Thắng (Huyện Phú Hoà cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24166,
+    "ten": "Xã Hòa Thắng (Thành phố Buôn Ma Thuột cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22276,
+    "ten": "Xã Hòa Thịnh (Xã Hòa Đồng - Huyện Tây Hoà cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 22294,
+    "ten": "Xã Hòa Thịnh (Huyện Tây Hoà cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24523,
+    "ten": "Xã Hòa Tiến (Huyện Krông Pắc cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22312,
+    "ten": "Xã Hòa Trị (Huyện Phú Hoà cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22297,
+    "ten": "Xã Hòa Tâm (Thị xã Đông Hòa cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24460,
+    "ten": "Xã Hòa Tân (Huyện Krông Bông cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22273,
+    "ten": "Xã Hòa Tân Tây (Huyện Tây Hoà cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22267,
+    "ten": "Xã Hòa Tân Đông (Thị xã Đông Hòa cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22291,
+    "ten": "Xã Hòa Xuân (Xã Hòa Xuân Đông - Thị xã Đông Hòa cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24178,
+    "ten": "Xã Hòa Xuân (Thành phố Buôn Ma Thuột cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22300,
+    "ten": "Xã Hòa Xuân Nam (Thị xã Đông Hòa cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24517,
+    "ten": "Xã Hòa Đông (Huyện Krông Pắc cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22321,
+    "ten": "Xã Hòa Định Tây (Huyện Phú Hoà cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22318,
+    "ten": "Xã Hòa Định Đông (Huyện Phú Hoà cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24215,
+    "ten": "Xã Ia JLơi (Huyện Ea Súp cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24214,
+    "ten": "Xã Ia Lốp (Huyện Ea Súp cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24221,
+    "ten": "Xã Ia RVê (Huyện Ea Súp cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24493,
+    "ten": "Xã KRông Búk (Huyện Krông Pắc cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24475,
+    "ten": "Xã Khuê Ngọc Điền (Huyện Krông Bông cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24538,
+    "ten": "Xã Krông Ana (Thị trấn Buôn Trấp - Huyện Krông Ana cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24448,
+    "ten": "Xã Krông Bông (Thị trấn Krông Kmar - Huyện Krông Bông cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24310,
+    "ten": "Xã Krông Búk (Xã Chứ KBô - Huyện Krông Búk cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24427,
+    "ten": "Xã Krông Jing (Huyện M'Đrắk cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24604,
+    "ten": "Xã Krông Nô (Huyện Lắk cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24343,
+    "ten": "Xã Krông Năng (Thị trấn Krông Năng - Huyện Krông Năng cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 22195,
+    "ten": "Xã Krông Pa (Huyện Sơn Hòa cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24490,
+    "ten": "Xã Krông Pắc (Thị trấn Phước An - Huyện Krông Pắc cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24442,
+    "ten": "Xã Krông Á (Huyện M'Đrắk cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24444,
+    "ten": "Xã Krông Á (Xã Cư San - Huyện M'Đrắk cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24580,
+    "ten": "Xã Liên Sơn Lắk (Thị trấn Liên Sơn - Huyện Lắk cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24412,
+    "ten": "Xã M’Drắk (Thị trấn M'Đrắk - Huyện M'Đrắk cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24607,
+    "ten": "Xã Nam Ka (Huyện Lắk cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 22319,
+    "ten": "Xã Phú Hòa 1 (Thị Trấn Phú Hoà - Huyện Phú Hoà cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 22303,
+    "ten": "Xã Phú Hòa 2 (Xã Hòa Quang Bắc - Huyện Phú Hoà cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24355,
+    "ten": "Xã Phú Lộc (Huyện Krông Năng cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22087,
+    "ten": "Xã Phú Mỡ (Huyện Đồng Xuân cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22096,
+    "ten": "Xã Phú Mỡ (Xã Xuân Quang 1 - Huyện Đồng Xuân cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24364,
+    "ten": "Xã Phú Xuân (Huyện Krông Năng cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 22168,
+    "ten": "Xã Phước Tân (Huyện Sơn Hòa cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24316,
+    "ten": "Xã Pơng Drang (Thị trấn Pơng Drang - Huyện Krông Búk cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24259,
+    "ten": "Xã Quảng Phú (Thị trấn Quảng Phú - Huyện Cư M'gar cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24262,
+    "ten": "Xã Quảng Tiến (Huyện Cư M'gar cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24577,
+    "ten": "Xã Quảng Điền (Huyện Krông Ana cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22198,
+    "ten": "Xã Suối Bạc (Huyện Sơn Hòa cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22192,
+    "ten": "Xã Suối Trai (Xã Eachà Rang - Huyện Sơn Hòa cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 22204,
+    "ten": "Xã Suối Trai (Huyện Sơn Hòa cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22207,
+    "ten": "Xã Sông Hinh (Thị trấn Hai Riêng - Huyện Sông Hinh cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 22234,
+    "ten": "Xã Sông Hinh (Huyện Sông Hinh cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22219,
+    "ten": "Xã Sơn Giang (Huyện Sông Hinh cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22201,
+    "ten": "Xã Sơn Hà (Huyện Sơn Hòa cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22165,
+    "ten": "Xã Sơn Hòa (Thị trấn Củng Sơn - Huyện Sơn Hòa cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 22189,
+    "ten": "Xã Sơn Nguyên (Huyện Sơn Hòa cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22183,
+    "ten": "Xã Sơn Phước (Huyện Sơn Hòa cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22250,
+    "ten": "Xã Sơn Thành (Xã Sơn Thành Đông - Huyện Tây Hoà cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 22249,
+    "ten": "Xã Sơn Thành Tây (Huyện Tây Hoà cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22186,
+    "ten": "Xã Sơn Xuân (Huyện Sơn Hòa cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22174,
+    "ten": "Xã Sơn Định (Huyện Sơn Hòa cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24352,
+    "ten": "Xã Tam Giang (Xã Ea Tam - Huyện Krông Năng cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24358,
+    "ten": "Xã Tam Giang (Huyện Krông Năng cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22114,
+    "ten": "Xã Tuy An Bắc (Thị trấn Chí Thạnh - Huyện Tuy An cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 22153,
+    "ten": "Xã Tuy An Nam (Xã An Mỹ - Huyện Tuy An cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 22132,
+    "ten": "Xã Tuy An Tây (Xã An Nghiệp - Huyện Tuy An cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 22120,
+    "ten": "Xã Tuy An Đông (Xã An Ninh Tây - Huyện Tuy An cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24244,
+    "ten": "Xã Tân Hoà (Huyện Buôn Đôn cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24317,
+    "ten": "Xã Tân Lập (Huyện Krông Búk cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24526,
+    "ten": "Xã Tân Tiến (Huyện Krông Pắc cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 22255,
+    "ten": "Xã Tây Hòa (Thị trấn Phú Thứ - Huyện Tây Hoà cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 22171,
+    "ten": "Xã Tây Sơn (Xã Sơn Hội - Huyện Sơn Hòa cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 22177,
+    "ten": "Xã Vân Hòa (Xã Sơn Long - Huyện Sơn Hòa cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24529,
+    "ten": "Xã Vụ Bổn (Huyện Krông Pắc cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 22060,
+    "ten": "Xã Xuân Cảnh (Xã Xuân Bình - Thị xã Sông Cầu cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 22066,
+    "ten": "Xã Xuân Cảnh (Thị xã Sông Cầu cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22054,
+    "ten": "Xã Xuân Hải (Thị xã Sông Cầu cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22093,
+    "ten": "Xã Xuân Long (Huyện Đồng Xuân cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22052,
+    "ten": "Xã Xuân Lâm (Thị xã Sông Cầu cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22090,
+    "ten": "Xã Xuân Lãnh (Huyện Đồng Xuân cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 22057,
+    "ten": "Xã Xuân Lộc (Thị xã Sông Cầu cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24382,
+    "ten": "Xã Xuân Phú (Huyện Ea Kar cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22072,
+    "ten": "Xã Xuân Phương (Thị xã Sông Cầu cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22111,
+    "ten": "Xã Xuân Phước (Huyện Đồng Xuân cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 22102,
+    "ten": "Xã Xuân Quang 2 (Huyện Đồng Xuân cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22108,
+    "ten": "Xã Xuân Quang 3 (Huyện Đồng Xuân cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22099,
+    "ten": "Xã Xuân Sơn Bắc (Huyện Đồng Xuân cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22105,
+    "ten": "Xã Xuân Sơn Nam (Huyện Đồng Xuân cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22069,
+    "ten": "Xã Xuân Thịnh (Thị xã Sông Cầu cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22075,
+    "ten": "Xã Xuân Thọ (Xã Xuân Thọ 1 - Thị xã Sông Cầu cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 22078,
+    "ten": "Xã Xuân Thọ 2 (Thị xã Sông Cầu cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24220,
+    "ten": "Xã Ya Tờ Mốt (Huyện Ea Súp cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24484,
+    "ten": "Xã Yang Mao (Xã Cư Drăm - Huyện Krông Bông cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24487,
+    "ten": "Xã Yang Mao (Huyện Krông Bông cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24469,
+    "ten": "Xã Yang Reh (Huyện Krông Bông cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24583,
+    "ten": "Xã Yang Tao (Huyện Lắk cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 22147,
+    "ten": "Xã Ô Loan (Xã An Hòa Hải - Huyện Tuy An cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 22084,
+    "ten": "Xã Đa Lộc (Huyện Đồng Xuân cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24589,
+    "ten": "Xã Đắk Liêng (Huyện Lắk cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24595,
+    "ten": "Xã Đắk Liêng (Xã Buôn Tría - Huyện Lắk cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 24601,
+    "ten": "Xã Đắk Nuê (Huyện Lắk cũ)",
+    "valid": false
+  },
+  {
+    "xaId": 24598,
+    "ten": "Xã Đắk Phơi (Huyện Lắk cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 22081,
+    "ten": "Xã Đồng Xuân (Thị trấn La Hai - Huyện Đồng Xuân cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 22222,
+    "ten": "Xã Đức Bình (Xã Đức Bình Đông - Huyện Sông Hinh cũ)",
+    "valid": true
+  },
+  {
+    "xaId": 22213,
+    "ten": "Xã Đức Bình Tây (Huyện Sông Hinh cũ)",
+    "valid": false
+  }
+]

@@ -587,37 +587,9 @@ def _set_nguon_goc_cho_mucdich(md):
         ng["isChange"] = True
 
 
-def normalize_mucdich_nguongoc_names(obj):
-    """
-    Chuẩn hóa các tên key khác nhau giữa GetThongTinDangKyByTinhHinhDangKyIds
-    và GetThongTinDangKyNhom1:
-      - MucDichSuDungs      -> ListMucDichSuDung
-      - NguonGocSuDungs     -> ListNguonGocSuDungDat
-    Làm in-place để payload gửi UpdateThuaDat luôn đúng format.
-    """
-    if isinstance(obj, dict):
-        if "ListMucDichSuDung" not in obj and isinstance(obj.get("MucDichSuDungs"), list):
-            obj["ListMucDichSuDung"] = obj.get("MucDichSuDungs") or []
-
-        if "ListNguonGocSuDungDat" not in obj and isinstance(obj.get("NguonGocSuDungs"), list):
-            obj["ListNguonGocSuDungDat"] = obj.get("NguonGocSuDungs") or []
-
-        for v in obj.values():
-            normalize_mucdich_nguongoc_names(v)
-
-    elif isinstance(obj, list):
-        for x in obj:
-            normalize_mucdich_nguongoc_names(x)
-
-    return obj
-
-
 def _iter_mucdich(obj):
-    normalize_mucdich_nguongoc_names(obj)
     if isinstance(obj, dict):
-        if "loaiMucDichSuDungId" in obj and ("ListNguonGocSuDungDat" in obj or "NguonGocSuDungs" in obj):
-            if "ListNguonGocSuDungDat" not in obj:
-                obj["ListNguonGocSuDungDat"] = obj.get("NguonGocSuDungs") or []
+        if "loaiMucDichSuDungId" in obj and "ListNguonGocSuDungDat" in obj:
             yield obj
         for v in obj.values():
             yield from _iter_mucdich(v)
@@ -628,7 +600,6 @@ def _iter_mucdich(obj):
 
 def cap_nhat_nguon_goc_thua_dat(payload):
     n = 0
-    normalize_mucdich_nguongoc_names(payload)
     for md in _iter_mucdich(payload):
         _set_nguon_goc_cho_mucdich(md)
         n += 1
@@ -971,6 +942,9 @@ def derive_nam_sinh_from_cccd(cccd):
         yy = int(so[4:6])
     except Exception:
         return None
+
+    # The year is taken from the 5th and 6th digits of the 12-digit CCCD.
+    # Example: 066087... -> 87 => 1987; 066001... -> 01 => 2001.
     if yy <= 30:
         return 2000 + yy
     return 1900 + yy
@@ -1124,32 +1098,11 @@ def iter_unique_persons(ttdk):
 
 
 def iter_unique_thua_dat(obj):
-    """
-    Duyệt thửa đất trong mọi dạng response.
-    Bản cũ chỉ bắt node có ListMucDichSuDung nên bị hụt khi
-    GetThongTinDangKyNhom1 trả MucDichSuDungs/NguonGocSuDungs.
-    """
     seen = set()
-    normalize_mucdich_nguongoc_names(obj)
-
-    def is_thua_dat(x):
-        if not isinstance(x, dict):
-            return False
-        if "thuaDatId" not in x:
-            return False
-        return (
-            "ListMucDichSuDung" in x
-            or "MucDichSuDungs" in x
-            or "DanhSachThuaDatDonDangKy" in x
-            or "maThua" in x
-            or ("soHieuToBanDo" in x and "soThuTuThua" in x)
-        )
-
     def walk(x):
         if isinstance(x, dict):
-            if is_thua_dat(x):
-                normalize_mucdich_nguongoc_names(x)
-                key = (str(x.get("thuaDatId")), str(x.get("version")), str(x.get("InId")))
+            if "thuaDatId" in x and "ListMucDichSuDung" in x:
+                key = (x.get("thuaDatId"), x.get("version"), x.get("InId"))
                 if key not in seen:
                     seen.add(key)
                     yield x
@@ -1158,7 +1111,6 @@ def iter_unique_thua_dat(obj):
         elif isinstance(x, list):
             for it in x:
                 yield from walk(it)
-
     yield from walk(obj)
 
 
@@ -1487,8 +1439,6 @@ def update_thua_dat_from_nhom1(session, tinh_hinh_dang_ky_id, phan_loai_item, de
         pass
 
     target_thua_id = (phan_loai_item or {}).get("thuaDatId")
-
-    # Quét cả raw_nhom1 lẫn payload_root vì mỗi môi trường MPLIS có thể bọc dữ liệu khác nhau.
     thua_list_all = list(iter_unique_thua_dat(payload_root))
     if not thua_list_all:
         thua_list_all = list(iter_unique_thua_dat(raw_nhom1))

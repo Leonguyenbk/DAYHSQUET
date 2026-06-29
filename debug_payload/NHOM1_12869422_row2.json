@@ -1,0 +1,89 @@
+{
+  "success": true,
+  "value": {
+    "tinhId": 66,
+    "huyenId": 643,
+    "xaId": 24163,
+    "tinhHinhDangKyId": 12869422,
+    "thoiDiemDangKy": null,
+    "ListGiayChungNhan": [],
+    "ListNghiaVuTaiChinh": null,
+    "ListDangKyTaiSan": null,
+    "ChuSoHuu": {
+      "CaNhans": [
+        {
+          "caNhanId": 6849960,
+          "version": 10,
+          "hoTen": "Dương Thị Bông",
+          "namSinh": 1981,
+          "ngaySinh": null,
+          "diaChi": "Thôn 3,, Xã Hòa thuận, TP Buôn Ma Thuột",
+          "maSoDinhDanh": "066181010295",
+          "GiayToTuyThans": [
+            {
+              "giayToTuyThanId": 4666762,
+              "caNhanId": 6849960,
+              "versionCaNhan": 10,
+              "loaiGiayToTuyThanId": 5,
+              "soGiayTo": "066181010295",
+              "maDinhDanhCaNhan": "066181010295",
+              "errorMessage": null
+            },
+            {
+              "giayToTuyThanId": 1565518,
+              "caNhanId": 6849960,
+              "versionCaNhan": 10,
+              "loaiGiayToTuyThanId": 2,
+              "soGiayTo": "240839688",
+              "maDinhDanhCaNhan": "066181010295",
+              "errorMessage": null
+            }
+          ],
+          "errorMessage": null
+        }
+      ],
+      "VoChongs": [],
+      "HoGiaDinhs": [],
+      "ToChucs": [],
+      "CongDongs": [],
+      "errorMessage": null
+    },
+    "TaiSan": {
+      "ThuaDats": [
+        {
+          "thuaDatId": 1361013,
+          "version": 11,
+          "xaId": 24163,
+          "soThuTuThua": 2055,
+          "soHieuToBanDo": 410004,
+          "dienTich": 2600,
+          "diaChi": "phường Tân An, Tỉnh Đắk Lắk",
+          "MucDichSuDungs": [
+            {
+              "mucDichSuDungId": 5657252,
+              "loaiMucDichSuDungId": null,
+              "dienTich": 2600,
+              "thoiHanSuDung": "2043",
+              "NguonGocSuDungs": [],
+              "errorMessage": null
+            }
+          ],
+          "TaiLieuDoDac": null,
+          "errorMessage": null
+        }
+      ],
+      "NhaRiengLes": [],
+      "KhuChungCus": [],
+      "NhaChungCus": [],
+      "CanHos": [],
+      "CongTrinhXayDungs": [],
+      "CongTrinhNgams": [],
+      "RungTrongs": [],
+      "CayLauNams": [],
+      "errorMessage": null
+    },
+    "canCoGiayChungNhan": true,
+    "errorMessage": null
+  },
+  "thongTinDangKy": null
+}
