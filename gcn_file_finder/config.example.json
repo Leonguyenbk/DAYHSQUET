@@ -1,0 +1,6 @@
+{
+  "model_dir": "models/paddleocr",
+  "default_dpi": 150,
+  "default_workers": 2,
+  "log_file": "gcn_file_finder.log"
+}

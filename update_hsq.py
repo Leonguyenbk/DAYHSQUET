@@ -617,17 +617,7 @@ def api_search_hosoquet(session, xa_id, so_to, so_thua):
             "raw": result
         }
 
-    if len(data) > 1:
-        return {
-            "ok": False,
-            "error": f"Tìm thấy {len(data)} bản ghi, không xử lý để tránh nhầm",
-            "raw": result
-        }
-
-    item = data[0]
-    list_hosoquet = item.get("ListHoSoQuet") or []
-
-    if not list_hosoquet:
+    if not any(item.get("ListHoSoQuet") for item in data):
         return {
             "ok": False,
             "error": "Có bản ghi nhưng không có ListHoSoQuet",
@@ -636,8 +626,6 @@ def api_search_hosoquet(session, xa_id, so_to, so_thua):
 
     return {
         "ok": True,
-        "item": item,
-        "list_hosoquet": list_hosoquet,
         "raw": result
     }
 
@@ -689,20 +677,24 @@ def get_tinh_hinh_id_from_item_hoso(item, hoso):
 
 
 def tim_hosoquet_tu_search(raw_search, uu_tien_chuacogiay=True):
+    """
+    Duyệt qua TẤT CẢ item/HSQ trả về từ search (có thể nhiều item/nhiều HSQ).
+    Ưu tiên tìm file CHUACOGIAY ở bất kỳ item/hoso nào trước, chỉ khi không
+    còn file CHUACOGIAY nào trong toàn bộ kết quả mới fallback về hoso đầu tiên.
+    """
     data = raw_search.get("data") or []
 
-    for item in data:
-        thong_tin    = item.get("ThongTinDangKy") or {}
-        tinh_hinh    = thong_tin.get("TinhHinhDangKy") or {}
-        list_hosoquet = item.get("ListHoSoQuet") or []
-
-        if uu_tien_chuacogiay:
+    if uu_tien_chuacogiay:
+        for item in data:
+            list_hosoquet = item.get("ListHoSoQuet") or []
             for hoso in list_hosoquet:
                 wrapper = hoso.get("ListFileHoSoQuet") or {}
                 files   = wrapper.get("ListFileHoSoQuet") or []
                 for f in files:
                     mo_ta = (f.get("moTa") or "").upper()
                     if "CHUACOGIAY" in mo_ta:
+                        thong_tin = item.get("ThongTinDangKy") or {}
+                        tinh_hinh = thong_tin.get("TinhHinhDangKy") or {}
                         return {
                             "info": {
                                 "thongTinHoSoId":   hoso.get("thongTinHoSoId"),
@@ -712,8 +704,12 @@ def tim_hosoquet_tu_search(raw_search, uu_tien_chuacogiay=True):
                             "hoso": hoso, "file": f, "item": item
                         }
 
+    for item in data:
+        list_hosoquet = item.get("ListHoSoQuet") or []
         if list_hosoquet:
             hoso = list_hosoquet[0]
+            thong_tin = item.get("ThongTinDangKy") or {}
+            tinh_hinh = thong_tin.get("TinhHinhDangKy") or {}
             return {
                 "info": {
                     "thongTinHoSoId":   hoso.get("thongTinHoSoId"),
@@ -730,21 +726,6 @@ def dem_file_trong_hoso(hoso):
     wrapper = hoso.get("ListFileHoSoQuet") or {}
     files   = wrapper.get("ListFileHoSoQuet") or []
     return len(files)
-
-
-def co_file_khong_chuacogiay(hoso):
-    wrapper = hoso.get("ListFileHoSoQuet") or {}
-    files   = wrapper.get("ListFileHoSoQuet") or []
-
-    for f in files:
-        mo_ta    = (f.get("moTa")   or "").upper()
-        ten_file = (f.get("tenFile") or f.get("Name") or "").upper()
-        text     = mo_ta + " " + ten_file
-
-        if text.strip() and "CHUACOGIAY" not in text:
-            return True, f.get("moTa") or f.get("tenFile") or "Có file không phải CHUACOGIAY"
-
-    return False, ""
 
 
 # =========================
@@ -935,15 +916,15 @@ def xu_ly_1_dong(session, item, maxa, folder_upload, ngay_dang_ky_lan_dau, logge
         progress(100, "Search lỗi")
         return done("❌", "Lỗi", "Search lỗi: " + res_search.get("error", ""))
 
-    item_search               = res_search["item"]
-    result_row["chu_su_dung"] = lay_chu_su_dung(item_search)
-
-    # 45% → parse kết quả search
+    # 45% → parse kết quả search (có thể có nhiều item/nhiều HSQ, chỉ quan tâm
+    # HSQ nào đang mang mô tả CHUACOGIAY để sửa, các HSQ/file khác giữ nguyên)
     progress(45, "Đã tìm thấy hồ sơ")
     found = tim_hosoquet_tu_search(res_search["raw"])
     if not found:
         progress(100, "Không tìm thấy HSQ phù hợp")
         return done("⚠️", "Lỗi", "Không tìm thấy ListHoSoQuet phù hợp")
+
+    result_row["chu_su_dung"] = lay_chu_su_dung(found["item"])
 
     info = found["info"]
     hoso = found["hoso"]
@@ -958,12 +939,12 @@ def xu_ly_1_dong(session, item, maxa, folder_upload, ngay_dang_ky_lan_dau, logge
         f"tờ={soto} | thửa={sothua} | file={tenfile}"
     )
 
-    # 55% → kiểm tra có file thật chưa
-    progress(55, "Kiểm tra file đã có")
-    da_co_file_that, ghi_chu_file = co_file_khong_chuacogiay(hoso)
-    if da_co_file_that:
+    # 55% → kiểm tra có file CHUACOGIAY để sửa không (không quan tâm các HSQ/file
+    # khác đã có file thật hay chưa, chỉ bỏ qua khi không còn CHUACOGIAY nào)
+    progress(55, "Kiểm tra file CHUACOGIAY")
+    if found["file"] is None:
         progress(100, "Bỏ qua")
-        return done("⏭️", "Bỏ qua", "Bỏ qua — đã có file: " + ghi_chu_file)
+        return done("⏭️", "Bỏ qua", "Bỏ qua — không còn HSQ nào mang mô tả CHUACOGIAY")
 
     if DRY_RUN:
         progress(100, "DRY RUN")

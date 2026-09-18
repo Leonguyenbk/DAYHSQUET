@@ -1,0 +1,87 @@
+{
+  "_mo_ta": "Cấu trúc Payload CHUẨN XÁC gửi lên API UpdateHoSoQuetExistFile (Form Data)",
+  "url": "https://dla.mplis.gov.vn/dc/HoSoQuetAjax/UpdateHoSoQuetExistFile",
+  "method": "POST",
+  "content_type": "multipart/form-data",
+
+  "TRUONG_HOP_1_HO_SO_QUET_RONG_TAO_MOI": {
+    "_ghi_chu": "Khi đơn chưa có hồ sơ quét hoặc chưa có file nào gắn với GCN này",
+    "form_data": {
+      "hoSoQuet": {
+        "thongTinHoSoId": 5565390,
+        "TuiHoSo": null,
+        "tuiHoSoId": 0,
+        "hoSoQuetId": 0
+      },
+      "infoHoSoQuet_1": {
+        "loaiHoSoQuet": 1,
+        "laGiayToVeNguonGoc": true,
+        "giayChungNhanId": "1138716",
+        "moTa": "Giấy chứng nhận CT 448651",
+        "tenGiayTo": "",
+        "trichYeu": "",
+        "versionGiayChungNhan": 11,
+        "laGiayChungNhan": true,
+        "__id": "59f6247c-1695-4d9d-8122-b5d699bb8afb",
+        "files": null
+      },
+      "count": "1",
+      "isLuuKhoHoSoQuet": "false"
+    },
+    "files_upload": {
+      "fileHoSoQuet_1": "(file PDF nhị phân, ví dụ: CT 448651.pdf)"
+    }
+  },
+
+  "TRUONG_HOP_2_THAY_THE_FILE_DA_CO_SAN_TRONG_HSQ": {
+    "_ghi_chu": "Khi HSQ đã có sẵn file vật lý cũ và ta upload file mới đè lên file đó",
+    "form_data": {
+      "hoSoQuet": {
+        "hoSoQuetId": 3710820,
+        "thongTinHoSoId": 5566515,
+        "tinhHinhDangKyId": 12913166,
+        "bienDongId": 4619907,
+        "xaId": 24121,
+        "CreatedDate": "2025-10-27T12:54:51.480Z",
+        "ModifiedDate": "2026-07-03T18:06:18.643Z",
+        "Id": "d94c934f-9fa6-4c1d-8350-23af8e2d81c9",
+        "Title": "3710820",
+        "Name": "f5f01472-f8cb-4ac8-be84-4eeed63a6dc9",
+        "Path": "/root/vdms/tangthu/data/vbdlis/nhomhosoquet/hosoquet/f5f01472-f8cb-4ac8-be84-4eeed63a6dc9",
+        "ParentPath": "/root/vdms/tangthu/data/vbdlis/nhomhosoquet/hosoquet",
+        "_id": 1,
+        "TuiHoSo": null,
+        "tuiHoSoId": 0
+      },
+      "infoHoSoQuet_1": {
+        "nodeId": "",
+        "deleteId": null,
+        "moTa": "Giấy chứng nhận DĐ 828383",
+        "tenGiayTo": null,
+        "trichYeu": null,
+        "isOldFile": false,
+        "laGiayToVeNguonGoc": true,
+        "laGiayChungNhan": true,
+        "giayChungNhanId": 1141605,
+        "workflowNodeId": "",
+        "versionGiayChungNhan": 11,
+        "loaiHoSoQuet": 1,
+        "daKySo": false,
+        "duongDan": null,
+        "duLieu": null,
+        "GiayChungNhan": null,
+        "hoSoQuetId": 3710820,
+        "thanhPhanHoSoQuetNId": "a2d4cf4f-bef0-4e31-9197-72b432597ea8",
+        "thanhPhanHoSoQuetId": 88606792,
+        "_id": 1,
+        "files": null,
+        "__id": "a070a868-2371-438c-8173-fc5b95f4fe64"
+      },
+      "count": "1",
+      "isLuuKhoHoSoQuet": "false"
+    },
+    "files_upload": {
+      "fileHoSoQuet_1": "(file PDF nhị phân, ví dụ: DĐ 828383.pdf)"
+    }
+  }
+}

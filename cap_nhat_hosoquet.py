@@ -49,6 +49,14 @@ API_RETRY_BACKOFF_SECONDS = 5
 # Ghi Excel sau mỗi N dòng (thay vì mỗi dòng)
 WRITE_EVERY_N = 10
 
+# Các loại hồ sơ quét (theo dropdown loaiHoSoQuet trên MPLIS)
+LOAI_HO_SO_QUET_OPTIONS = {
+    0: "Giấy tờ",
+    1: "Giấy chứng nhận",
+    2: "Đơn đăng ký",
+    3: "Thông báo xác nhận đăng ký",
+}
+
 
 # =========================
 # LOG REDIRECT (thread-safe)
@@ -86,7 +94,7 @@ def doc_excel(path_excel):
         if value:
             headers[str(value).strip().lower()] = col
 
-    required_cols = ["soto", "sothua", "loaidat", "tenfile"]
+    required_cols = ["soto", "sothua", "loaidat", "tenfile", "sogcn"]
     missing = [c for c in required_cols if c not in headers]
 
     if missing:
@@ -99,8 +107,9 @@ def doc_excel(path_excel):
         sothua  = ws.cell(row=row, column=headers["sothua"]).value
         loaidat = ws.cell(row=row, column=headers["loaidat"]).value
         tenfile = ws.cell(row=row, column=headers["tenfile"]).value
+        sogcn   = ws.cell(row=row, column=headers["sogcn"]).value
 
-        if not soto and not sothua and not loaidat and not tenfile:
+        if not soto and not sothua and not loaidat and not tenfile and not sogcn:
             continue
 
         data.append({
@@ -109,6 +118,7 @@ def doc_excel(path_excel):
             "sothua":  str(sothua).strip()  if sothua  is not None else "",
             "loaidat": str(loaidat).strip() if loaidat is not None else "",
             "tenfile": str(tenfile).strip() if tenfile is not None else "",
+            "sogcn":   str(sogcn).strip()   if sogcn   is not None else "",
         })
 
     return data
@@ -122,7 +132,7 @@ def ghi_excel_output(rows, output_path, lock):
         ws.title = "KetQua"
 
         headers = [
-            "STT", "Dòng Excel", "Số tờ", "Số thửa", "Loại đất", "Tên file",
+            "STT", "Dòng Excel", "Số tờ", "Số thửa", "Loại đất", "Tên file", "Số GCN",
             "Mô tả mới", "tinhHinhDangKyId", "hoSoQuetId", "thongTinHoSoId",
             "Chủ sử dụng", "Diện tích", "Trạng thái", "Ghi chú"
         ]
@@ -139,6 +149,7 @@ def ghi_excel_output(rows, output_path, lock):
                 r.get("sothua"),
                 r.get("loaidat"),
                 r.get("tenfile"),
+                r.get("sogcn"),
                 r.get("mo_ta"),
                 r.get("tinhHinhDangKyId"),
                 r.get("hoSoQuetId"),
@@ -370,27 +381,29 @@ def lay_thong_tin_dang_ky_by_id(session, tinh_hinh_dang_ky_id, token=None):
     try:
         js = r.json()
     except Exception:
-        raise Exception(
-            "Response GetThongTinDangKy không phải JSON: "
-            + r.text[:1000]
-        )
+        return {
+            "ok": False,
+            "error": "Response GetThongTinDangKy không phải JSON: " + r.text[:1000]
+        }
 
     if "value" not in js or not js["value"]:
-        raise Exception(
-            f"Không lấy được value từ tinhHinhDangKyId={tinh_hinh_dang_ky_id}. "
-            f"Response={str(js)[:1000]}"
-        )
+        return {
+            "ok": False,
+            "error": f"Không lấy được value từ tinhHinhDangKyId={tinh_hinh_dang_ky_id}. "
+                     f"Response={str(js)[:1000]}"
+        }
 
-    return js
+    return {"ok": True, "raw": js}
 
 
-def build_payload_update_quyen_quan_ly(response_json, ngay_dang_ky_lan_dau_ddmmyyyy):
+def build_payload_update_quyen_quan_ly(response_json, ngay_dang_ky_lan_dau_ddmmyyyy, chu_id=None):
     """
     Build payload gửi UpdateThongTinDangKy từ response GetThongTinDangKyByTinhHinhDangKyIds.
 
     Chỉ sửa đúng:
       - TinhHinhDangKy.coQuyenQuanLy = True
       - TinhHinhDangKy.thoiDiemDangKyLanDau = ngày nhập dd/mm/yyyy convert sang ISO UTC
+      - ChuSoHuu.ToChucs[0].toChucId / ChuSoHuu.CaNhans[0].caNhanId = chu_id (nếu có)
     Các phần khác giữ nguyên: TinhHinhDangKy, ChuSoHuu, TaiSan.
     """
     data = response_json["value"][0]
@@ -406,13 +419,23 @@ def build_payload_update_quyen_quan_ly(response_json, ngay_dang_ky_lan_dau_ddmmy
     payload["TinhHinhDangKy"]["thoiDiemDangKyLanDau"] = ddmmyyyy_to_iso_utc_start_of_day_vn(
         ngay_dang_ky_lan_dau_ddmmyyyy
     )
+
+    if chu_id:
+        chu_so_huu = payload.get("ChuSoHuu") or {}
+        to_chucs = chu_so_huu.get("ToChucs") or []
+        ca_nhans = chu_so_huu.get("CaNhans") or []
+        if to_chucs:
+            to_chucs[0]["toChucId"] = safe_int(chu_id)
+        elif ca_nhans:
+            ca_nhans[0]["caNhanId"] = safe_int(chu_id)
+
     return payload
 
 
-def api_update_thong_tin_dang_ky(session, tinh_hinh_dang_ky_id, ngay_dang_ky_lan_dau_ddmmyyyy):
+def api_update_thong_tin_dang_ky(session, tinh_hinh_dang_ky_id, ngay_dang_ky_lan_dau_ddmmyyyy, chu_id=None):
     """
     1) GET thông tin theo tinhHinhDangKyId
-    2) Build payload, chỉ sửa coQuyenQuanLy + thoiDiemDangKyLanDau
+    2) Build payload, chỉ sửa coQuyenQuanLy + thoiDiemDangKyLanDau (+ chu_id nếu có)
     3) POST UpdateThongTinDangKy
 
     Nếu endpoint UpdateThongTinDangKy của máy mày dùng URL khác hoặc tên field khác,
@@ -424,7 +447,8 @@ def api_update_thong_tin_dang_ky(session, tinh_hinh_dang_ky_id, ngay_dang_ky_lan
 
     payload = build_payload_update_quyen_quan_ly(
         res_get["raw"],
-        ngay_dang_ky_lan_dau_ddmmyyyy
+        ngay_dang_ky_lan_dau_ddmmyyyy,
+        chu_id=chu_id
     )
 
     headers_json = dict(session.headers)
@@ -434,69 +458,62 @@ def api_update_thong_tin_dang_ky(session, tinh_hinh_dang_ky_id, ngay_dang_ky_lan
         "X-Requested-With": "XMLHttpRequest",
     })
 
-    # Cách 1: gửi JSON body trực tiếp.
-    try:
-        res = session.post(
-            URL_UPDATE_THONG_TIN_DANG_KY,
-            data=json.dumps(payload, ensure_ascii=False),
-            headers=headers_json,
-            timeout=API_UPDATE_TIMEOUT
-        )
-    except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
-        return {"ok": False, "error": f"Timeout/lỗi mạng khi UpdateThongTinDangKy: {e}"}
-    except requests.exceptions.RequestException as e:
-        return {"ok": False, "error": f"Lỗi request UpdateThongTinDangKy: {e}"}
+    # QUAN TRỌNG: endpoint này (theo F12 thật) nhận body bọc trong key "thongTinDangKy",
+    # KHÔNG phải gửi thẳng {TinhHinhDangKy, ChuSoHuu, TaiSan} ở top-level.
+    # Nếu gửi sai hình dạng, MVC bind model rỗng/null, action vẫn trả success=true
+    # nhưng KHÔNG cập nhật gì cả (đây là lý do coQuyenQuanLy/thoiDiemDangKyLanDau
+    # không đổi dù response báo thành công) — nên thử đúng dạng bọc trước, rồi mới
+    # fallback sang gửi raw không bọc.
+    payload_variants = [
+        ("json_wrapper_thongTinDangKy", {"thongTinDangKy": payload}),
+        ("json_raw_top_level", payload),
+    ]
 
-    try:
-        js = res.json()
-    except Exception:
-        js = None
+    last_text = ""
+    last_js = None
 
-    if res.ok and isinstance(js, dict) and (js.get("success") is True or js.get("Success") is True or js.get("ok") is True):
-        return {"ok": True, "raw": js, "payload": payload}
-
-    # Cách 2 fallback: một số action MVC nhận form field tên data/model/payload.
-    headers_form = dict(session.headers)
-    headers_form.update({
-        "Accept": "application/json, text/javascript, */*; q=0.01",
-        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-        "X-Requested-With": "XMLHttpRequest",
-    })
-
-    last_text = res.text[:1000]
-    for field_name in ("data", "model", "payload"):
+    for mode, body in payload_variants:
         try:
-            res2 = session.post(
+            with open(f"debug_UpdateThongTinDangKy_{mode}.json", "w", encoding="utf-8") as f:
+                json.dump(body, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+        try:
+            res = session.post(
                 URL_UPDATE_THONG_TIN_DANG_KY,
-                data={field_name: json.dumps(payload, ensure_ascii=False)},
-                headers=headers_form,
+                data=json.dumps(body, ensure_ascii=False),
+                headers=headers_json,
                 timeout=API_UPDATE_TIMEOUT
             )
-            try:
-                js2 = res2.json()
-            except Exception:
-                js2 = None
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+            last_text = f"Timeout/lỗi mạng khi UpdateThongTinDangKy ({mode}): {e}"
+            continue
+        except requests.exceptions.RequestException as e:
+            last_text = f"Lỗi request UpdateThongTinDangKy ({mode}): {e}"
+            continue
 
-            if res2.ok and isinstance(js2, dict) and (js2.get("success") is True or js2.get("Success") is True or js2.get("ok") is True):
-                return {"ok": True, "raw": js2, "payload": payload, "sent_as": field_name}
+        last_text = res.text[:1000]
+        try:
+            js = res.json()
+        except Exception:
+            js = None
+        last_js = js
 
-            last_text = res2.text[:1000]
-        except Exception as e:
-            last_text = str(e)
+        if res.ok and isinstance(js, dict) and (js.get("success") is True or js.get("Success") is True or js.get("ok") is True):
+            return {"ok": True, "raw": js, "payload": payload, "sent_as": mode}
 
     return {
         "ok": False,
         "error": "UpdateThongTinDangKy không thành công. "
-                 "Nếu F12 thấy endpoint/field khác, sửa URL_UPDATE_THONG_TIN_DANG_KY hoặc field data/model/payload. "
-                 f"Phản hồi cuối: {last_text}",
+                 f"Phản hồi cuối: {last_js if last_js is not None else last_text}",
         "payload": payload
     }
 
 
-def normalize_tenfile_key(tenfile):
-    """Gom nhóm theo tên file, bỏ khác biệt hoa/thường và folder path."""
-    tenfile = str(tenfile or "").strip().replace("/", "\\")
-    return os.path.basename(tenfile).strip().upper()
+def normalize_sogcn_key(sogcn):
+    """Gom nhóm theo số GCN, bỏ khác biệt hoa/thường và khoảng trắng thừa."""
+    return " ".join(str(sogcn or "").strip().upper().split())
 
 # =========================
 # API: SEARCH HỒ SƠ QUÉT
@@ -733,7 +750,7 @@ def safe_int(value, default=0):
         return default
 
 
-def api_update_hosoquet_exist_file(session, file_path, found_hosoquet, mo_ta_moi):
+def api_update_hosoquet_exist_file(session, file_path, found_hosoquet, mo_ta_moi, loai_ho_so_quet=2):
     if not os.path.isfile(file_path):
         return {"ok": False, "error": f"Không tìm thấy file PDF: {file_path}"}
 
@@ -763,7 +780,7 @@ def api_update_hosoquet_exist_file(session, file_path, found_hosoquet, mo_ta_moi
     }
 
     info_ho_so_quet = {
-        "loaiHoSoQuet":       2,
+        "loaiHoSoQuet":       safe_int(loai_ho_so_quet, 2),
         "laGiayToVeNguonGoc": False,
         "giayChungNhanId":    "",
         "moTa":               mo_ta_moi,
@@ -825,6 +842,64 @@ def api_update_hosoquet_exist_file(session, file_path, found_hosoquet, mo_ta_moi
     return {"ok": True, "raw": result}
 
 
+def api_update_hosoquet_metadata_only(session, found_hosoquet, mo_ta_moi, loai_ho_so_quet=2):
+    """
+    Sửa moTa + loaiHoSoQuet của ĐÚNG file CHUACOGIAY đang có trong HSQ, KHÔNG đính
+    kèm file mới (không đẩy HSQ). Endpoint UpdateHoSoQuetExistFile chấp nhận gửi lại
+    toàn bộ node hiện có kèm files=null — server chỉ cập nhật metadata, giữ nguyên
+    file vật lý cũ. Các node/file khác trong HSQ giữ nguyên, chỉ sửa đúng node target.
+    """
+    hoso        = found_hosoquet["hoso"]
+    target_file = found_hosoquet.get("file")
+
+    wrapper   = hoso.get("ListFileHoSoQuet") or {}
+    list_file = wrapper.get("ListFileHoSoQuet") or []
+    if not list_file:
+        return {"ok": False, "error": "HSQ không có ListFileHoSoQuet để cập nhật metadata"}
+
+    hoso_core = copy.deepcopy(hoso)
+    hoso_core.pop("ListFileHoSoQuet", None)
+
+    data = {
+        "hoSoQuet": json.dumps(hoso_core, ensure_ascii=False),
+        "count":    str(len(list_file)),
+    }
+
+    for i, node in enumerate(list_file, start=1):
+        n = copy.deepcopy(node)
+        n["files"] = None
+        if target_file is not None and node is target_file:
+            n["moTa"]         = mo_ta_moi
+            n["loaiHoSoQuet"] = safe_int(loai_ho_so_quet, 2)
+        data[f"infoHoSoQuet_{i}"] = json.dumps(n, ensure_ascii=False)
+
+    headers = dict(session.headers)
+    headers.update({
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "X-Requested-With": "XMLHttpRequest",
+        "Referer": REFERER_URL,
+        "Origin": "https://dla.mplis.gov.vn",
+    })
+    headers.pop("Content-Type", None)  # để requests tự set x-www-form-urlencoded đúng kiểu
+
+    try:
+        res = session.post(API_UPDATE_HOSOQUET, data=data, headers=headers, timeout=API_UPDATE_TIMEOUT)
+    except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+        return {"ok": False, "error": f"Timeout/lỗi mạng khi update metadata HSQ: {e}"}
+    except requests.exceptions.RequestException as e:
+        return {"ok": False, "error": f"Lỗi request update metadata HSQ: {e}"}
+
+    try:
+        js = res.json()
+    except Exception:
+        return {"ok": False, "error": f"Response update metadata HSQ không phải JSON: {res.text[:1000]}"}
+
+    if not js.get("success"):
+        return {"ok": False, "error": str(js), "raw": js}
+
+    return {"ok": True, "raw": js}
+
+
 def kiem_tra_sau_update_bang_search(session, xa_id, so_to, so_thua, mo_ta_moi):
     res = api_search_hosoquet(session, xa_id, so_to, so_thua)
 
@@ -851,12 +926,14 @@ def kiem_tra_sau_update_bang_search(session, xa_id, so_to, so_thua, mo_ta_moi):
 # XỬ LÝ 1 DÒNG
 # =========================
 
-def xu_ly_1_dong(session, item, maxa, folder_upload, ngay_dang_ky_lan_dau, logger, progress_cb=None):
+def xu_ly_1_dong(session, item, maxa, folder_upload, ngay_dang_ky_lan_dau, logger,
+                  day_hsq=True, chu_id=None, loai_ho_so_quet=2, progress_cb=None):
     row_excel = item["row"]
     soto      = item["soto"]
     sothua    = item["sothua"]
     loaidat   = item["loaidat"]
     tenfile   = item["tenfile"]
+    sogcn     = item.get("sogcn", "")
 
     file_path  = lay_duong_dan_file(folder_upload, tenfile)
     mo_ta_moi  = f"CHUACOGIAY_{maxa}_{loaidat}-DDK"
@@ -867,6 +944,7 @@ def xu_ly_1_dong(session, item, maxa, folder_upload, ngay_dang_ky_lan_dau, logge
         "sothua":           sothua,
         "loaidat":          loaidat,
         "tenfile":          tenfile,
+        "sogcn":            sogcn,
         "mo_ta":            mo_ta_moi,
         "tinhHinhDangKyId": "",
         "hoSoQuetId":       "",
@@ -891,11 +969,12 @@ def xu_ly_1_dong(session, item, maxa, folder_upload, ngay_dang_ky_lan_dau, logge
     # 0% → bắt đầu dòng
     progress(0, "Bắt đầu")
 
-    # 10% → kiểm tra file PDF
-    progress(10, "Kiểm tra file PDF")
-    if not os.path.isfile(file_path):
-        progress(100, "Lỗi file")
-        return done("❌", "Lỗi", f"Không tìm thấy file: {file_path}")
+    # 10% → kiểm tra file PDF (chỉ cần khi có đẩy HSQ)
+    if day_hsq:
+        progress(10, "Kiểm tra file PDF")
+        if not os.path.isfile(file_path):
+            progress(100, "Lỗi file")
+            return done("❌", "Lỗi", f"Không tìm thấy file: {file_path}")
 
     # 25% → Search
     progress(25, "Đang search hồ sơ quét")
@@ -922,6 +1001,54 @@ def xu_ly_1_dong(session, item, maxa, folder_upload, ngay_dang_ky_lan_dau, logge
     result_row["thongTinHoSoId"]   = hoso.get("thongTinHoSoId")   or info.get("thongTinHoSoId")
     result_row["tinhHinhDangKyId"] = hoso.get("tinhHinhDangKyId") or info.get("tinhHinhDangKyId")
 
+    if not day_hsq:
+        # Không đẩy HSQ — vẫn sửa moTa/loaiHoSoQuet của file CHUACOGIAY hiện có
+        # (không đính kèm file mới) + cập nhật thông tin đăng ký / chủ sử dụng.
+        if found.get("file") is None:
+            progress(100, "Bỏ qua")
+            return done("⏭️", "Bỏ qua", "Bỏ qua — không còn HSQ nào mang mô tả CHUACOGIAY để sửa")
+
+        if DRY_RUN:
+            progress(100, "DRY RUN")
+            return done("🧪", "DRY_RUN", "DRY_RUN — chưa update thật")
+
+        progress(60, "Đang cập nhật mô tả/loại HSQ (không đẩy file)")
+        res_update_meta = api_update_hosoquet_metadata_only(
+            session=session,
+            found_hosoquet=found,
+            mo_ta_moi=mo_ta_moi,
+            loai_ho_so_quet=loai_ho_so_quet
+        )
+        if not res_update_meta.get("ok"):
+            progress(100, "Update metadata HSQ lỗi")
+            return done("❌", "Lỗi", "Update mô tả/loại HSQ lỗi: " + res_update_meta.get("error", ""))
+
+        progress(75, "Đang cập nhật thông tin đăng ký/chủ (không đẩy HSQ)")
+        res_update_ttdk = api_update_thong_tin_dang_ky(
+            session=session,
+            tinh_hinh_dang_ky_id=result_row["tinhHinhDangKyId"],
+            ngay_dang_ky_lan_dau_ddmmyyyy=ngay_dang_ky_lan_dau,
+            chu_id=chu_id
+        )
+        if not res_update_ttdk.get("ok"):
+            progress(100, "Update TTĐK lỗi")
+            return done(
+                "❌", "Lỗi",
+                "Update mô tả/loại HSQ OK nhưng UpdateThongTinDangKy lỗi: " + res_update_ttdk.get("error", "")
+            )
+
+        progress(90, "Đang kiểm tra lại")
+        ok_check, _ = kiem_tra_sau_update_bang_search(
+            session=session, xa_id=maxa, so_to=soto, so_thua=sothua, mo_ta_moi=mo_ta_moi
+        )
+
+        if ok_check:
+            progress(100, "Hoàn thành")
+            return done("✅", "Thành công", "Đã cập nhật mô tả/loại HSQ + thông tin đăng ký/chủ (không đẩy HSQ)")
+        else:
+            progress(100, "Cần kiểm tra")
+            return done("⚠️", "Cần kiểm tra", "Cần kiểm tra lại (không đẩy HSQ)")
+
     # 55% → kiểm tra có file thật chưa
     progress(55, "Kiểm tra file đã có")
     da_co_file_that, ghi_chu_file = co_file_khong_chuacogiay(hoso)
@@ -939,7 +1066,8 @@ def xu_ly_1_dong(session, item, maxa, folder_upload, ngay_dang_ky_lan_dau, logge
         session=session,
         file_path=file_path,
         found_hosoquet=found,
-        mo_ta_moi=mo_ta_moi
+        mo_ta_moi=mo_ta_moi,
+        loai_ho_so_quet=loai_ho_so_quet
     )
     if not res_update.get("ok"):
         progress(100, "Update lỗi")
@@ -950,7 +1078,8 @@ def xu_ly_1_dong(session, item, maxa, folder_upload, ngay_dang_ky_lan_dau, logge
     res_update_ttdk = api_update_thong_tin_dang_ky(
         session=session,
         tinh_hinh_dang_ky_id=result_row["tinhHinhDangKyId"],
-        ngay_dang_ky_lan_dau_ddmmyyyy=ngay_dang_ky_lan_dau
+        ngay_dang_ky_lan_dau_ddmmyyyy=ngay_dang_ky_lan_dau,
+        chu_id=chu_id
     )
     if not res_update_ttdk.get("ok"):
         progress(100, "Update TTĐK lỗi")
@@ -981,7 +1110,8 @@ def xu_ly_1_dong(session, item, maxa, folder_upload, ngay_dang_ky_lan_dau, logge
 # WORKER (chạy trong thread riêng)
 # =========================
 
-def worker_run(username, password, maxa, ngay_dang_ky_lan_dau, excel_path, folder_upload, log_queue):
+def worker_run(username, password, maxa, ngay_dang_ky_lan_dau, excel_path, folder_upload, log_queue,
+               day_hsq=True, chu_id=None, loai_ho_so_quet=2):
     logger = ThreadSafeLogger(log_queue)
     driver = None
 
@@ -998,19 +1128,25 @@ def worker_run(username, password, maxa, ngay_dang_ky_lan_dau, excel_path, folde
         except Exception:
             raise RuntimeError("Ngày đăng ký lần đầu không đúng định dạng dd/mm/yyyy. Ví dụ: 23/04/2026")
 
-        # Gom nhóm theo tên file. Các dòng cùng tenfile chỉ gọi API/search/upload/update 1 lần.
+        # Gom nhóm theo số GCN (soGCN) — áp dụng cho cả 2 trường hợp có/không đẩy HSQ.
+        # Lưu ý: nếu 2 dòng cùng soGCN nhưng khác tenfile, chỉ file của dòng đại diện
+        # được đẩy lên, các dòng còn lại dùng chung kết quả (không upload file riêng).
         grouped = {}
         for item in data:
-            key = normalize_tenfile_key(item.get("tenfile"))
+            key = normalize_sogcn_key(item.get("sogcn"))
             if not key:
                 key = f"__ROW_{item.get('row')}__"
             grouped.setdefault(key, []).append(item)
 
         groups = list(grouped.items())
         tong = len(groups)
-        logger.log(f"✅ Đọc Excel xong: {len(data)} dòng | Gom còn {tong} nhóm tenfile duy nhất.")
+        logger.log(f"✅ Đọc Excel xong: {len(data)} dòng | Gom còn {tong} nhóm soGCN duy nhất.")
         logger.log(f"Ngày đăng ký lần đầu: {ngay_dang_ky_lan_dau} -> {ngay_iso_test}")
-        logger.log(f"DRY_RUN={DRY_RUN} | MAX_WORKERS={MAX_WORKERS}")
+        loai_hsq_label = LOAI_HO_SO_QUET_OPTIONS.get(loai_ho_so_quet, str(loai_ho_so_quet))
+        logger.log(
+            f"ĐẨY HSQ={day_hsq} | Loại HSQ={loai_ho_so_quet} ({loai_hsq_label}) | "
+            f"ID chủ={chu_id or '(không đổi)'} | DRY_RUN={DRY_RUN} | MAX_WORKERS={MAX_WORKERS}"
+        )
         logger.log("API search HSQ:  " + API_SEARCH_HOSOQUET)
         logger.log("API update HSQ:  " + API_UPDATE_HOSOQUET)
         logger.log("API get TTĐK:    " + URL_GET_THONG_TIN_DANG_KY)
@@ -1065,8 +1201,9 @@ def worker_run(username, password, maxa, ngay_dang_ky_lan_dau, excel_path, folde
             copied["sothua"] = item.get("sothua")
             copied["loaidat"] = item.get("loaidat")
             copied["tenfile"] = item.get("tenfile")
+            copied["sogcn"] = item.get("sogcn")
             copied["note"] = (
-                f"Cùng tên file '{group_key}' với dòng {master_row}; "
+                f"Cùng soGCN '{group_key}' với dòng {master_row}; "
                 "không gọi API lần nữa. Kết quả xử lý dùng chung từ dòng đại diện. "
                 + str(master_result.get("note") or "")
             )
@@ -1097,6 +1234,9 @@ def worker_run(username, password, maxa, ngay_dang_ky_lan_dau, excel_path, folde
                     folder_upload=folder_upload,
                     ngay_dang_ky_lan_dau=ngay_dang_ky_lan_dau,
                     logger=logger,
+                    day_hsq=day_hsq,
+                    chu_id=chu_id,
+                    loai_ho_so_quet=loai_ho_so_quet,
                     progress_cb=row_progress
                 )
             except Exception as e:
@@ -1107,6 +1247,7 @@ def worker_run(username, password, maxa, ngay_dang_ky_lan_dau, excel_path, folde
                     "sothua":           first_item.get("sothua"),
                     "loaidat":          first_item.get("loaidat"),
                     "tenfile":          first_item.get("tenfile"),
+                    "sogcn":            first_item.get("sogcn"),
                     "mo_ta":            "",
                     "tinhHinhDangKyId": "",
                     "hoSoQuetId":       "",
@@ -1120,7 +1261,7 @@ def worker_run(username, password, maxa, ngay_dang_ky_lan_dau, excel_path, folde
             group_results = [kq_master]
             if len(items_in_group) > 1:
                 logger.log(
-                    f"🔁 Nhóm tenfile '{group_key}' có {len(items_in_group)} dòng; "
+                    f"🔁 Nhóm soGCN '{group_key}' có {len(items_in_group)} dòng; "
                     f"đã xử lý 1 lần ở dòng {row_excel}, các dòng còn lại dùng chung ID/kết quả."
                 )
                 for item2 in items_in_group[1:]:
@@ -1208,6 +1349,12 @@ class App(tk.Tk):
         self.var_folder    = tk.StringVar()
         self.var_workers   = tk.IntVar(value=MAX_WORKERS)
         self.var_dry_run   = tk.BooleanVar(value=DRY_RUN)
+        self.var_day_hsq   = tk.BooleanVar(value=True)
+        self.var_chu_id    = tk.StringVar()
+        self.loai_hsq_display_to_id = {
+            f"{k} - {v}": k for k, v in LOAI_HO_SO_QUET_OPTIONS.items()
+        }
+        self.var_loai_hsq  = tk.StringVar(value="2 - Đơn đăng ký")
 
         # Progress state
         self._total         = 0
@@ -1234,27 +1381,43 @@ class App(tk.Tk):
         ttk.Entry(frame_top, textvariable=self.var_ngay_dk, width=16).grid(row=1, column=3, padx=5, pady=4, sticky="w")
         ttk.Label(frame_top, text="dd/mm/yyyy", foreground="gray").grid(row=1, column=4, padx=0, pady=4, sticky="w")
 
-        ttk.Label(frame_top, text="Số luồng (workers)").grid(row=2, column=0, padx=5, pady=4, sticky="w")
-        ttk.Spinbox(frame_top, textvariable=self.var_workers, from_=1, to=10, width=6).grid(row=2, column=1, padx=5, pady=4, sticky="w")
+        ttk.Checkbutton(frame_top, text="Đẩy hồ sơ quét (upload file)", variable=self.var_day_hsq,
+                        command=self.on_toggle_day_hsq).grid(row=2, column=0, columnspan=2, padx=5, pady=4, sticky="w")
+        ttk.Label(frame_top, text="ID thông tin chủ").grid(row=2, column=2, padx=5, pady=4, sticky="w")
+        ttk.Entry(frame_top, textvariable=self.var_chu_id, width=20).grid(row=2, column=3, padx=5, pady=4, sticky="w")
+        ttk.Label(frame_top, text="(bỏ tick 'Đẩy hồ sơ quét' để chỉ update thông tin chủ/đăng ký)",
+                  foreground="gray").grid(row=2, column=4, padx=0, pady=4, sticky="w")
+
+        ttk.Label(frame_top, text="Loại hồ sơ quét").grid(row=3, column=0, padx=5, pady=4, sticky="w")
+        ttk.Combobox(
+            frame_top, textvariable=self.var_loai_hsq,
+            values=list(self.loai_hsq_display_to_id.keys()),
+            state="readonly", width=28
+        ).grid(row=3, column=1, columnspan=2, padx=5, pady=4, sticky="w")
+
+        ttk.Label(frame_top, text="Số luồng (workers)").grid(row=4, column=0, padx=5, pady=4, sticky="w")
+        ttk.Spinbox(frame_top, textvariable=self.var_workers, from_=1, to=10, width=6).grid(row=4, column=1, padx=5, pady=4, sticky="w")
         ttk.Checkbutton(frame_top, text="DRY RUN (chỉ kiểm tra, không update)", variable=self.var_dry_run).grid(
-            row=2, column=2, columnspan=3, padx=10, pady=4, sticky="w"
+            row=4, column=2, columnspan=3, padx=10, pady=4, sticky="w"
         )
 
-        ttk.Label(frame_top, text="File Excel").grid(row=3, column=0, padx=5, pady=4, sticky="w")
-        ttk.Entry(frame_top, textvariable=self.var_excel, width=90).grid(row=3, column=1, columnspan=3, padx=5, pady=4, sticky="we")
-        ttk.Button(frame_top, text="Duyệt", command=self.browse_excel).grid(row=3, column=4, padx=5, pady=4)
+        ttk.Label(frame_top, text="File Excel").grid(row=5, column=0, padx=5, pady=4, sticky="w")
+        ttk.Entry(frame_top, textvariable=self.var_excel, width=90).grid(row=5, column=1, columnspan=3, padx=5, pady=4, sticky="we")
+        ttk.Button(frame_top, text="Duyệt", command=self.browse_excel).grid(row=5, column=4, padx=5, pady=4)
 
-        ttk.Label(frame_top, text="Folder PDF").grid(row=4, column=0, padx=5, pady=4, sticky="w")
-        ttk.Entry(frame_top, textvariable=self.var_folder, width=90).grid(row=4, column=1, columnspan=3, padx=5, pady=4, sticky="we")
-        ttk.Button(frame_top, text="Duyệt", command=self.browse_folder).grid(row=4, column=4, padx=5, pady=4)
+        ttk.Label(frame_top, text="Folder PDF").grid(row=6, column=0, padx=5, pady=4, sticky="w")
+        self.entry_folder = ttk.Entry(frame_top, textvariable=self.var_folder, width=90)
+        self.entry_folder.grid(row=6, column=1, columnspan=3, padx=5, pady=4, sticky="we")
+        self.btn_browse_folder = ttk.Button(frame_top, text="Duyệt", command=self.browse_folder)
+        self.btn_browse_folder.grid(row=6, column=4, padx=5, pady=4)
 
         self.btn_start = ttk.Button(frame_top, text="▶  BẮT ĐẦU CHẠY", command=self.start_run)
-        self.btn_start.grid(row=5, column=1, padx=5, pady=8, sticky="w")
+        self.btn_start.grid(row=7, column=1, padx=5, pady=8, sticky="w")
         self.btn_clear = ttk.Button(frame_top, text="Xóa log", command=self.clear_log)
-        self.btn_clear.grid(row=5, column=2, padx=5, pady=8, sticky="w")
+        self.btn_clear.grid(row=7, column=2, padx=5, pady=8, sticky="w")
 
-        ttk.Label(frame_top, text="Excel cần cột: soto | sothua | loaidat | tenfile",
-                  foreground="blue").grid(row=6, column=0, columnspan=5, padx=5, pady=3, sticky="w")
+        ttk.Label(frame_top, text="Excel cần cột: soto | sothua | loaidat | tenfile | sogcn (gom nhóm theo sogcn)",
+                  foreground="blue").grid(row=8, column=0, columnspan=5, padx=5, pady=3, sticky="w")
         frame_top.columnconfigure(3, weight=1)
 
         # ── Progress section ───────────────────────────────────────────────
@@ -1351,10 +1514,15 @@ class App(tk.Tk):
         if not os.path.isfile(self.var_excel.get().strip()):
             messagebox.showerror("Sai đường dẫn", "File Excel không tồn tại.")
             return False
-        if not os.path.isdir(self.var_folder.get().strip()):
+        if self.var_day_hsq.get() and not os.path.isdir(self.var_folder.get().strip()):
             messagebox.showerror("Sai đường dẫn", "Folder PDF không tồn tại.")
             return False
         return True
+
+    def on_toggle_day_hsq(self):
+        state = "normal" if self.var_day_hsq.get() else "disabled"
+        self.entry_folder.config(state=state)
+        self.btn_browse_folder.config(state=state)
 
     def start_run(self):
         if self.worker_thread and self.worker_thread.is_alive():
@@ -1379,6 +1547,9 @@ class App(tk.Tk):
                 self.var_excel.get().strip(),
                 self.var_folder.get().strip(),
                 self.log_queue,
+                self.var_day_hsq.get(),
+                self.var_chu_id.get().strip() or None,
+                self.loai_hsq_display_to_id.get(self.var_loai_hsq.get(), 2),
             ),
             daemon=True
         )

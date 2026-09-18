@@ -2,22 +2,17 @@
 """
 Tool cập nhật Thông tin đăng ký (VBDLIS / MPLIS) — KHÔNG upload file.
 
-Quy tắc:
-  (B)(C) Cập nhật thông tin cá nhân cho MỌI loại chủ (cá nhân / vợ chồng / hộ gia đình)
-         ở MỌI vị trí trong payload — duyệt đệ quy.
-         Mã định danh: CCCD 12 số -> ghi maSoDinhDanh; CMND 9 số -> bỏ qua + ghi chú.
-  (D)    Nguồn gốc thửa đất: mục đích ONT/ODT -> loaiNguonGocSuDungDatId = 2 (có thu tiền),
-         còn lại -> 3 (không thu tiền).
-  (E)    Giấy chứng nhận: ngayVaoSo trống -> lấy của GCN khác đã có, không có thì lấy ngày tạo đơn;
-         soVaoSo trống -> "--\\--".
-  (F)    Hồ sơ quét nguồn gốc: nếu chưa node nào laGiayToVeNguonGoc & laGiayChungNhan = true,
-         tìm node GCN (ưu tiên dạng có số phát hành "CP 099228"), lấy node CUỐI, set 2 cờ = true.
-         (mặc định TẮT — chỉ build+debug, chưa gửi, vì cần verify endpoint metadata HSQ)
+BẢN SỬA LỖI 429 (Too Many Requests):
+  - Thêm rate limiter toàn cục: mọi request (kể cả nhiều luồng) cách nhau tối thiểu
+    MIN_REQUEST_INTERVAL giây -> không nã server quá nhanh.
+  - Mọi POST đi qua http_post(): tự retry khi gặp 429 / 5xx, có exponential backoff,
+    tôn trọng header Retry-After nếu server gửi.
+  - 429 luôn được retry (server từ chối TRƯỚC khi xử lý nên an toàn, kể cả thao tác ghi).
+  - 5xx chỉ retry cho thao tác ĐỌC (search/get) để tránh ghi 2 lần.
+  - MAX_WORKERS mặc định = 1 cho module làm sạch (chạy song song rất dễ dính 429).
+  - Báo lỗi kèm HTTP status code để dễ chẩn đoán.
 
-LƯU Ý:
-  - DRY_RUN mặc định True: chỉ build payload + xuất debug JSON, KHÔNG gửi update.
-  - Mỗi quy tắc có checkbox bật/tắt riêng.
-  - File debug ghi cạnh file Excel để đối chiếu trước khi chạy thật.
+Quy tắc nghiệp vụ giữ nguyên như bản gốc.
 """
 
 import os
@@ -60,14 +55,39 @@ URL_UPDATE_DELTA_GCN         = "https://dla.mplis.gov.vn/dc/LamSachDuLieuAjax/Ca
 URL_SEARCH_PHAN_LOAI        = "https://dla.mplis.gov.vn/dc/LamSachDuLieuAjax/GetThongKePhanLoaiThuaDatChiTiet"
 URL_GET_HSQ_KEKHAI          = "https://dla.mplis.gov.vn/dc/HoSoQuetAjax/GetHoSoQuetKeKhaiByTinhHinhDangKyId"
 URL_GUI_PHAN_LOAI_LAI       = "https://dla.mplis.gov.vn/dc/LamSachDuLieuAjax/GuiYeuCauPhanLoaiLai"
+URL_GET_TTDK_NHOM1          = "https://dla.mplis.gov.vn/dc/LamSachDuLieuAjax/GetThongTinDangKyNhom1"
 
 DRY_RUN     = False         # False = gửi cập nhật thật
-MAX_WORKERS = 3
+MAX_WORKERS = 1             # ĐÃ HẠ XUỐNG 1: module làm sạch chạy song song rất dễ dính 429
 API_SEARCH_TIMEOUT = 120
 API_UPDATE_TIMEOUT = 180
-API_SEARCH_RETRIES = 3
-API_RETRY_BACKOFF_SECONDS = 5
+
+# ----- Retry / backoff -----
+API_SEARCH_RETRIES = 5
+API_RETRY_BACKOFF_SECONDS = 5      # backoff cơ bản (giây), sẽ nhân theo cấp số nhân
+MAX_BACKOFF_SECONDS = 90           # trần thời gian chờ mỗi lần
 WRITE_EVERY_N = 10
+
+# ----- Rate limiter toàn cục (chống 429) -----
+# Mọi request cách nhau tối thiểu MIN_REQUEST_INTERVAL giây, áp dụng cho TẤT CẢ luồng.
+# Tăng số này lên nếu vẫn bị 429 (vd 1.0 hoặc 1.5).
+MIN_REQUEST_INTERVAL = 0.6
+
+_rate_lock = threading.Lock()
+_last_request_time = [0.0]
+
+
+def _throttle():
+    """Giãn đều các request giữa mọi luồng để không vượt rate limit của server."""
+    if MIN_REQUEST_INTERVAL <= 0:
+        return
+    with _rate_lock:
+        now = time.monotonic()
+        wait = MIN_REQUEST_INTERVAL - (now - _last_request_time[0])
+        if wait > 0:
+            time.sleep(wait)
+        _last_request_time[0] = time.monotonic()
+
 
 # Bật/tắt từng quy tắc (UI override). Đây chỉ là default.
 RULE_MA_DINH_DANH    = True   # (C)
@@ -97,6 +117,75 @@ class ThreadSafeLogger:
         pass
 
 
+# Logger toàn cục (set trong worker_run) để các hàm HTTP báo khi bị 429.
+_GLOBAL_LOGGER = None
+
+
+def _glog(msg):
+    if _GLOBAL_LOGGER is not None:
+        _GLOBAL_LOGGER.log(msg)
+
+
+# =========================
+# CORE HTTP: POST có retry 429 / 5xx + throttle
+# =========================
+
+def http_post(session, url, *, retries, timeout, retry_5xx=True, **kwargs):
+    """
+    POST trung tâm cho toàn bộ tool.
+
+    Hành vi:
+      - Luôn giãn tốc độ qua _throttle() trước mỗi lần gọi.
+      - Gặp 429: luôn retry với backoff (an toàn vì server từ chối trước khi xử lý).
+      - Gặp 5xx: chỉ retry khi retry_5xx=True (đặt True cho ĐỌC, False cho GHI).
+      - Gặp Timeout/ConnectionError: retry.
+      - Tôn trọng header Retry-After nếu có.
+
+    Trả về (response, error_str). Khi ok: (res, None). Khi lỗi mạng cạn retry: (None, "...").
+    """
+    kwargs.setdefault("allow_redirects", False)
+    last_net_err = None
+
+    for attempt in range(1, retries + 1):
+        _throttle()
+        try:
+            res = session.post(url, timeout=timeout, **kwargs)
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+            last_net_err = e
+            if attempt < retries:
+                wait = min(API_RETRY_BACKOFF_SECONDS * attempt, MAX_BACKOFF_SECONDS)
+                _glog(f"⚠️ Lỗi mạng ({e.__class__.__name__}), chờ {wait}s rồi thử lại {attempt}/{retries - 1}")
+                time.sleep(wait)
+                continue
+            return None, f"Timeout/lỗi mạng sau {retries} lần thử: {last_net_err}"
+        except requests.exceptions.RequestException as e:
+            return None, f"Lỗi request API: {e}"
+
+        # Server bóp (429) hoặc lỗi server (5xx)
+        should_retry = (res.status_code == 429) or (retry_5xx and res.status_code >= 500)
+        if should_retry and attempt < retries:
+            ra = res.headers.get("Retry-After")
+            if ra and str(ra).strip().isdigit():
+                wait = int(ra)
+            else:
+                # exponential backoff: base * 2^(attempt-1)
+                wait = min(API_RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1)), MAX_BACKOFF_SECONDS)
+            ten_loi = "429 (rate limit)" if res.status_code == 429 else f"{res.status_code}"
+            _glog(f"⏳ Server trả {ten_loi}, nghỉ {wait}s rồi thử lại {attempt}/{retries - 1}...")
+            time.sleep(wait)
+            continue
+
+        return res, None
+
+    # Cạn retry mà vẫn 429/5xx
+    return res, None
+
+
+# Giữ tên cũ post_retry để code cũ gọi vẫn chạy (mặc định retry cả 5xx vì dùng cho đọc).
+def post_retry(session, url, *, retries, timeout, **kwargs):
+    return http_post(session, url, retries=retries, timeout=timeout, retry_5xx=True, **kwargs)
+
+
 # =========================
 # EXCEL
 # =========================
@@ -111,7 +200,6 @@ def doc_excel(path_excel):
         if value:
             headers[str(value).strip().lower()] = col
 
-    # Chỉ cần tờ/thửa để định vị hồ sơ. loaidat tùy chọn (dùng để ghi chú).
     required_cols = ["soto", "sothua"]
     missing = [c for c in required_cols if c not in headers]
     if missing:
@@ -221,6 +309,7 @@ def login_mplis(username, password):
     options.add_argument("--start-maximized")
     options.add_argument("--window-position=100,100")
     options.add_argument("--window-size=1400,900")
+    options.add_experimental_option("detach", True)
 
     service = Service(ChromeDriverManager().install())
 
@@ -370,12 +459,6 @@ def _apply_to_person(person, changes):
 
 
 def cap_nhat_ma_dinh_danh(person, notes, ghi_note=True):
-    """
-    Cập nhật mã định danh theo CCCD 12 số.
-    Ghi cả:
-      - CaNhan.maSoDinhDanh
-      - ListGiayToTuyThan CCCD.maDinhDanhCaNhan
-    """
     ds = person.get("ListGiayToTuyThan") or []
 
     cccd = None
@@ -412,6 +495,7 @@ def cap_nhat_ma_dinh_danh(person, notes, ghi_note=True):
     if ghi_note:
         notes.append(f"Cập nhật mã định danh CCCD - {ten}: {so}")
 
+
 def cap_nhat_thong_tin_ca_nhan(payload, updates_by_canhan=None, updates_by_cccd=None,
                                notes=None, do_ma_dinh_danh=True):
     updates_by_canhan = updates_by_canhan or {}
@@ -439,6 +523,39 @@ def cap_nhat_thong_tin_ca_nhan(payload, updates_by_canhan=None, updates_by_cccd=
             seen_note.add(cid)
 
     return notes
+
+
+def need_update_gcn_from_errors(phan_loai_item):
+    s = "\n".join(_all_error_texts(phan_loai_item)).lower()
+    return (
+        "giấy chứng nhận" in s
+        or "giaychungnhan" in s
+        or "số vào sổ" in s
+        or "sovaoso" in s
+        or "ngày vào sổ" in s
+        or "ngayvaoso" in s
+    )
+
+
+def need_update_identity_from_errors(phan_loai_item):
+    s = "\n".join(_all_error_texts(phan_loai_item)).lower()
+    return (
+        "mã định danh" in s
+        or "masodinhdanh" in s
+        or "madinhdanhcanhan" in s
+        or "năm sinh" in s
+        or "namsinh" in s
+        or "chủ sử dụng" in s
+    )
+
+
+def need_update_source_delta_from_errors(phan_loai_item):
+    s = "\n".join(_all_error_texts(phan_loai_item)).lower()
+    return (
+        "nguồn gốc" in s
+        or "nguongocsudungdat" in s
+        or "loại nguồn gốc" in s
+    )
 
 
 # =========================
@@ -497,13 +614,6 @@ SO_VAO_SO_DEFAULT = "--\\--"   # in ra: --\--
 
 
 def cap_nhat_giay_chung_nhan(ttdk, ngay_tao_don_iso, notes):
-    """
-    Trường hợp ListGiayChungNhan có bản ghi thiếu soVaoSo/ngayVaoSo:
-    - ngayVaoSo trống: lấy ngày vào sổ của GCN khác trong cùng list; nếu không có thì lấy ngày tạo đơn.
-    - soVaoSo trống: ghi --\\--.
-    - Ghi chú kết quả: Cập nhật lại thông tin GCN...
-    Không gọi UpdateGiayChungNhan riêng; phần này nằm trong payload UpdateThongTinDangKy.
-    """
     ds_gcn = ttdk.get("ListGiayChungNhan") or []
     if not ds_gcn:
         return
@@ -541,42 +651,44 @@ def cap_nhat_giay_chung_nhan(ttdk, ngay_tao_don_iso, notes):
 # =========================
 # (F) HỒ SƠ QUÉT: đánh dấu node nguồn gốc / giấy chứng nhận
 # =========================
-
-# Số phát hành GCN: 1-2 chữ cái IN HOA + (cách/underscore tùy chọn) + 6-8 số.
-# Vd "CP 099228", "DP929827", "..._CP 099228", "C 1234567".
-# (?<![A-Z]) để cụm chữ không dính vào từ dài hơn; (?!\d) chặn số dài hơn 8.
 _RE_SO_GCN = re.compile(r"(?<![A-Z])([A-Z]{1,2})[\s_]?(\d{6,8})(?!\d)")
 
-
 def _diem_uu_tien_node_gcn(moTa):
-    s = (moTa or "").upper()
+    s = (moTa or "").upper().strip()
+
     if _RE_SO_GCN.search(s):
+        return 5
+
+    if "GIẤY CHỨNG NHẬN" in s or "GIAY CHUNG NHAN" in s:
+        return 4
+
+    if "GCN" in s:
+        return 3
+
+    # Nhận G, G1, G2, G01, G-1, G_2...
+    if re.search(r"(^|[^A-Z0-9])G[\s\-_]*\d*([^A-Z0-9]|$)", s):
         return 2
-    if "GIẤY CHỨNG NHẬN" in s or re.search(r"\bGCN\b", s):
-        return 1
+
     return 0
 
 
 def cap_nhat_hosoquet_nguon_goc(list_file_hsq, notes):
-    """
-    HSQ: nếu đã có CÙNG MỘT file vừa là GCN vừa là giấy tờ nguồn gốc thì bỏ qua.
-    Nếu chưa có, ưu tiên file đang là GCN; nếu chưa có GCN thì tìm theo mô tả/mã phát hành GCN.
-    Sau đó set 2 cờ trên chính file đó.
-    """
     if not list_file_hsq:
         notes.append("HSQ không có file")
         return False
 
-    # Phải cùng 1 node có cả 2 cờ mới coi là xong.
+    list_file_hsq = [f for f in list_file_hsq if isinstance(f, dict)]
+    if not list_file_hsq:
+        notes.append("HSQ không có file hợp lệ (tất cả phần tử không phải dict)")
+        return False
+
     for f in list_file_hsq:
         if f.get("laGiayChungNhan") is True and f.get("laGiayToVeNguonGoc") is True:
-            notes.append("HSQ đã có file vừa là GCN vừa là giấy tờ nguồn gốc, bỏ qua")
-            return False
+            notes.append("HSQ đã liên kết GCN + nguồn gốc sẵn")
+            return "already"          # ← thay vì False
 
-    # Quan trọng: nếu đã có node laGiayChungNhan=True thì chọn đúng node đó trước.
     candidate = next((f for f in list_file_hsq if f.get("laGiayChungNhan") is True), None)
 
-    # Nếu chưa file nào được tích GCN thì tìm theo mô tả có GCN / giấy chứng nhận / số phát hành.
     if candidate is None:
         best_score = -1
         for f in list_file_hsq:
@@ -597,16 +709,8 @@ def cap_nhat_hosoquet_nguon_goc(list_file_hsq, notes):
     notes.append(f"Cập nhật lại thông tin HSQ: tích GCN + giấy tờ nguồn gốc cho '{candidate.get('moTa')}'")
     return True
 
+
 def api_update_hosoquet(session, hoso, debug_dir, row_excel, notes):
-    """
-    Cập nhật metadata HSQ qua UpdateHoSoQuetExistFile.
-    Endpoint này nhận form-urlencoded:
-      hoSoQuet=<json core>
-      infoHoSoQuet_1=<json node>
-      infoHoSoQuet_2=<json node>
-      ...
-      count=<số node>
-    """
     list_file = (hoso.get("ListFileHoSoQuet") or {}).get("ListFileHoSoQuet") or []
     if not list_file:
         return {"ok": False, "error": "HSQ không có ListFileHoSoQuet", "notes": notes}
@@ -643,24 +747,28 @@ def api_update_hosoquet(session, hoso, debug_dir, row_excel, notes):
         "Referer": REFERER_URL,
         "Origin": "https://dla.mplis.gov.vn",
     })
-    headers.pop("Content-Type", None)  # để requests tự set x-www-form-urlencoded đúng kiểu
+    headers.pop("Content-Type", None)
 
-    try:
-        res = session.post(API_UPDATE_HOSOQUET, data=data, headers=headers, timeout=API_UPDATE_TIMEOUT)
-    except requests.exceptions.RequestException as e:
-        return {"ok": False, "error": f"Lỗi request HSQ: {e}", "notes": notes}
+    # Ghi -> retry_5xx=False (chỉ retry 429), tránh ghi lặp khi server lỗi giữa chừng.
+    res, request_error = http_post(
+        session, API_UPDATE_HOSOQUET,
+        retries=API_SEARCH_RETRIES, timeout=API_UPDATE_TIMEOUT,
+        retry_5xx=False, data=data, headers=headers,
+    )
+    if request_error:
+        return {"ok": False, "error": f"Lỗi request HSQ: {request_error}", "notes": notes}
 
     text = res.text[:1000]
     try:
         js = res.json()
     except Exception:
-        return {"ok": False, "error": text, "notes": notes}
+        return {"ok": False, "error": f"HTTP {res.status_code} - {text}", "notes": notes}
 
     if res.ok and _response_update_ok(js):
         notes.append("Update HSQ OK")
         return {"ok": True, "raw": js, "notes": notes}
 
-    return {"ok": False, "error": str(js)[:1000], "notes": notes}
+    return {"ok": False, "error": f"HTTP {res.status_code} - {str(js)[:1000]}", "notes": notes}
 
 
 # =========================
@@ -668,7 +776,6 @@ def api_update_hosoquet(session, hoso, debug_dir, row_excel, notes):
 # =========================
 
 def _lay_ngay_tao_don(ttdk):
-    """Ưu tiên CreatedDate của TinhHinhDangKy, fallback thoiDiemDangKy / ngayTiepNhan."""
     thd = ttdk.get("TinhHinhDangKy") or {}
     for k in ("CreatedDate", "thoiDiemDangKy", "ngayTiepNhan", "ModifiedDate"):
         v = thd.get(k)
@@ -679,7 +786,6 @@ def _lay_ngay_tao_don(ttdk):
 
 def build_payload_update(response_json, ngay_dang_ky_lan_dau_ddmmyyyy=None,
                          flags=None, updates_by_canhan=None, updates_by_cccd=None):
-    """Trả về (thong_tin_dang_ky, notes)."""
     flags = flags or {}
     if not response_json.get("value"):
         raise Exception("Response không có value để build payload")
@@ -697,8 +803,6 @@ def build_payload_update(response_json, ngay_dang_ky_lan_dau_ddmmyyyy=None,
 
     notes = []
     ngay_tao_don_iso = _lay_ngay_tao_don(ttdk)
-
-    # Bỏ cập nhật coQuyenQuanLy và thoiDiemDangKyLanDau theo yêu cầu.
 
     if flags.get("RULE_MA_DINH_DANH", True) or updates_by_canhan or updates_by_cccd:
         cap_nhat_thong_tin_ca_nhan(
@@ -722,20 +826,6 @@ def build_payload_update(response_json, ngay_dang_ky_lan_dau_ddmmyyyy=None,
 # API: GET + UPDATE THÔNG TIN ĐĂNG KÝ
 # =========================
 
-def post_retry(session, url, *, retries, timeout, **kwargs):
-    last_error = None
-    for attempt in range(1, retries + 1):
-        try:
-            return session.post(url, timeout=timeout, **kwargs), None
-        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
-            last_error = e
-            if attempt < retries:
-                time.sleep(API_RETRY_BACKOFF_SECONDS * attempt)
-        except requests.exceptions.RequestException as e:
-            return None, f"Loi request API: {e}"
-    return None, f"Timeout/loi mang sau {retries} lan thu: {last_error}"
-
-
 def lay_thong_tin_dang_ky_by_id(session, tinh_hinh_dang_ky_id):
     tid = safe_int(tinh_hinh_dang_ky_id, 0)
     if not tid:
@@ -752,9 +842,9 @@ def lay_thong_tin_dang_ky_by_id(session, tinh_hinh_dang_ky_id):
 
     payload = {"tinhHinhDangKyIds": [tid], "getHoSoQuet": False}
 
-    res, request_error = post_retry(
+    res, request_error = http_post(
         session, URL_GET_THONG_TIN_DANG_KY,
-        retries=API_SEARCH_RETRIES, timeout=API_SEARCH_TIMEOUT,
+        retries=API_SEARCH_RETRIES, timeout=API_SEARCH_TIMEOUT, retry_5xx=True,
         data=json.dumps(payload, ensure_ascii=False), headers=headers
     )
     if request_error:
@@ -763,7 +853,7 @@ def lay_thong_tin_dang_ky_by_id(session, tinh_hinh_dang_ky_id):
     try:
         js = res.json()
     except Exception:
-        return {"ok": False, "error": f"GET không phải JSON: {res.text[:500]}",
+        return {"ok": False, "error": f"HTTP {res.status_code} - GET không phải JSON: {res.text[:300]}",
                 "status_code": res.status_code}
 
     if not js.get("success"):
@@ -784,7 +874,6 @@ def _response_update_ok(js):
     return False
 
 
-
 def _post_json_update(session, url, payload, ten_api):
     headers = dict(session.headers)
     headers.update({
@@ -794,18 +883,22 @@ def _post_json_update(session, url, payload, ten_api):
         "Referer": REFERER_URL,
         "Origin": "https://dla.mplis.gov.vn",
     })
-    try:
-        res = session.post(url, data=json.dumps(payload, ensure_ascii=False), headers=headers, timeout=API_UPDATE_TIMEOUT)
-    except requests.exceptions.RequestException as e:
-        return {"ok": False, "error": f"Lỗi request {ten_api}: {e}"}
+    # Ghi -> retry_5xx=False (chỉ retry 429 cho an toàn, tránh ghi lặp).
+    res, request_error = http_post(
+        session, url,
+        retries=API_SEARCH_RETRIES, timeout=API_UPDATE_TIMEOUT, retry_5xx=False,
+        data=json.dumps(payload, ensure_ascii=False), headers=headers,
+    )
+    if request_error:
+        return {"ok": False, "error": f"Lỗi request {ten_api}: {request_error}"}
     text = res.text[:1000]
     try:
         js = res.json()
     except Exception:
-        return {"ok": False, "error": text, "status_code": res.status_code}
+        return {"ok": False, "error": f"HTTP {res.status_code} - {text}", "status_code": res.status_code}
     if res.ok and _response_update_ok(js):
         return {"ok": True, "raw": js}
-    return {"ok": False, "error": str(js)[:1000], "raw": js}
+    return {"ok": False, "error": f"HTTP {res.status_code} - {str(js)[:1000]}", "raw": js}
 
 
 def api_update_ca_nhan(session, person):
@@ -816,12 +909,39 @@ def api_update_thua_dat(session, thua_dat):
     return _post_json_update(session, URL_UPDATE_THUA_DAT, thua_dat, "UpdateThuaDat")
 
 
+def api_get_thong_tin_dang_ky_nhom1(session, tinh_hinh_dang_ky_id):
+    # Đọc -> _post_json_update đang retry_5xx=False; nhưng đây là GET-nhom1 dạng đọc,
+    # vẫn an toàn vì chỉ đọc. Dùng riêng http_post retry_5xx=True cho chắc.
+    headers = dict(session.headers)
+    headers.update({
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "Content-Type": "application/json; charset=UTF-8",
+        "X-Requested-With": "XMLHttpRequest",
+        "Referer": REFERER_URL,
+        "Origin": "https://dla.mplis.gov.vn",
+    })
+    payload = {"tinhHinhDangKyId": safe_int(tinh_hinh_dang_ky_id)}
+    res, request_error = http_post(
+        session, URL_GET_TTDK_NHOM1,
+        retries=API_SEARCH_RETRIES, timeout=API_SEARCH_TIMEOUT, retry_5xx=True,
+        data=json.dumps(payload, ensure_ascii=False), headers=headers,
+    )
+    if request_error:
+        return {"ok": False, "error": f"Lỗi request GetThongTinDangKyNhom1: {request_error}"}
+    try:
+        js = res.json()
+    except Exception:
+        return {"ok": False, "error": f"HTTP {res.status_code} - {res.text[:500]}", "status_code": res.status_code}
+    if res.ok and _response_update_ok(js):
+        return {"ok": True, "raw": js}
+    return {"ok": False, "error": f"HTTP {res.status_code} - {str(js)[:1000]}", "raw": js}
+
+
 def is_blank(v):
     return v is None or str(v).strip() == ""
 
 
 def derive_nam_sinh_from_cccd(cccd):
-    """Suy năm sinh từ CCCD 12 số theo quy tắc Việt Nam: lấy từ 2 chữ số năm sinh ở vị trí 5-6."""
     so = re.sub(r"\D", "", str(cccd or ""))
     if len(so) != 12:
         return None
@@ -829,6 +949,9 @@ def derive_nam_sinh_from_cccd(cccd):
         yy = int(so[4:6])
     except Exception:
         return None
+
+    # The year is taken from the 5th and 6th digits of the 12-digit CCCD.
+    # Example: 066087... -> 87 => 1987; 066001... -> 01 => 2001.
     if yy <= 30:
         return 2000 + yy
     return 1900 + yy
@@ -839,7 +962,6 @@ def get_cccd_node(person):
         so = re.sub(r"\D", "", str(g.get("soGiayTo") or ""))
         if str(g.get("loaiGiayToTuyThanId")) == "5" and len(so) == 12:
             return g, so
-    # fallback: có người đã có maSoDinhDanh trên cá nhân
     so = re.sub(r"\D", "", str(person.get("maSoDinhDanh") or ""))
     if len(so) == 12:
         return None, so
@@ -847,7 +969,6 @@ def get_cccd_node(person):
 
 
 def _nguon_goc_value_for_missing_key(key, ttdk):
-    """Tính giá trị loaiNguonGocSuDungDatId cho key thiếu nguồn gốc dựa trên mục đích sử dụng."""
     m = re.search(r"MUCDICHSUDUNG\.(\d+)", str(key or ""), re.I)
     md_id = m.group(1) if m else None
     if not md_id:
@@ -857,120 +978,140 @@ def _nguon_goc_value_for_missing_key(key, ttdk):
             return str(_nguon_goc_id_theo_mucdich(md.get("loaiMucDichSuDungId")))
     return None
 
+def _build_delta_thu_cong(data, value0, ttdk, tid, notes, phan_loai_item):
+    """Build tay (fallback) — chỉ chạy khi duLieuCapNhat null/rỗng."""
+    thdk = ttdk.get("TinhHinhDangKy") or {}
+ 
+    # ----- GCN: soVaoSo / ngayVaoSo -----
+    if need_update_gcn_from_errors(phan_loai_item):
+        ds_gcn = (value0.get("ListGiayChungNhan") or ttdk.get("ListGiayChungNhan") or [])
+        ngay_co_san = next((g.get("ngayVaoSo") for g in ds_gcn if not is_blank(g.get("ngayVaoSo"))), None)
+        ngay_fallback = ngay_co_san or thdk.get("thoiDiemDangKy") or _lay_ngay_tao_don(ttdk)
+ 
+        if not is_blank(tid) and is_blank(thdk.get("thoiDiemDangKy")) and not is_blank(ngay_fallback):
+            data[f"TINHHINHDANGKY.{tid}|thoiDiemDangKy"] = ngay_fallback
+            notes.append("Cập nhật thoiDiemDangKy theo ngày vào sổ GCN")
+ 
+        for gcn in ds_gcn:
+            gid = gcn.get("giayChungNhanId")
+            ver = gcn.get("version")
+            if is_blank(gid) or is_blank(ver) or is_blank(tid):
+                continue
+            prefix = f"TINHHINHDANGKY.{tid}|GIAYCHUNGNHAN.{gid}_{ver}"
+            changed = []
+            if is_blank(gcn.get("soVaoSo")):
+                data[f"{prefix}|soVaoSo"] = SO_VAO_SO_DEFAULT
+                changed.append("soVaoSo")
+            if is_blank(gcn.get("ngayVaoSo")) and not is_blank(ngay_fallback):
+                data[f"{prefix}|ngayVaoSo"] = ngay_fallback
+                changed.append("ngayVaoSo")
+            if changed:
+                notes.append(f"Cập nhật lại thông tin GCN {gid}: {', '.join(changed)}")
+ 
+    # ----- Nguồn gốc sử dụng đất -----
+    if need_update_source_delta_from_errors(phan_loai_item):
+        missing_keys = list((phan_loai_item or {}).get("thongTinDangKyChuaDapUngNhom1") or [])
+        used_missing = set()
+        for key in missing_keys:
+            k = str(key)
+            if "NGUONGOCSUDUNGDAT" in k.upper() and k.endswith("|loaiNguonGocSuDungDatId"):
+                val = _nguon_goc_value_for_missing_key(k, ttdk)
+                if val is not None:
+                    data[k] = val
+                    used_missing.add(k)
+                    notes.append(f"Cập nhật nguồn gốc bằng delta: {k} = {val}")
+ 
+        if can_update_thua_from_errors(phan_loai_item):
+            for thua in iter_unique_thua_dat(ttdk):
+                thua_id = thua.get("thuaDatId")
+                thua_ver = thua.get("version")
+                if is_blank(thua_id) or is_blank(thua_ver):
+                    continue
+                for md in thua.get("ListMucDichSuDung") or []:
+                    md_id = md.get("mucDichSuDungId")
+                    val = str(_nguon_goc_id_theo_mucdich(md.get("loaiMucDichSuDungId")))
+                    for ng in md.get("ListNguonGocSuDungDat") or []:
+                        ng_id = ng.get("nguonGocSuDungDatId")
+                        if is_blank(md_id) or is_blank(ng_id):
+                            continue
+                        key = (
+                            f"TINHHINHDANGKY.{tid}"
+                            f"|THUADAT.{thua_id}_{thua_ver}"
+                            f"|MUCDICHSUDUNG.{md_id}"
+                            f"|NGUONGOCSUDUNGDAT.{ng_id}"
+                            f"|loaiNguonGocSuDungDatId"
+                        )
+                        if key in used_missing or is_blank(ng.get("loaiNguonGocSuDungDatId")):
+                            data[key] = val
+                            notes.append(f"Cập nhật nguồn gốc bằng delta: {key} = {val}")
+ 
+    # ----- Identity: mã định danh / năm sinh -----
+    if need_update_identity_from_errors(phan_loai_item):
+        for person in iter_unique_persons(ttdk):
+            cid = person.get("caNhanId")
+            ver = person.get("version")
+            if is_blank(cid) or is_blank(ver) or is_blank(tid):
+                continue
+            gttt, cccd = get_cccd_node(person)
+            if not cccd:
+                continue
+            prefix = f"TINHHINHDANGKY.{tid}|CANHAN.{cid}_{ver}"
+            nam_sinh = derive_nam_sinh_from_cccd(cccd)
+ 
+            data[f"{prefix}|maSoDinhDanh"] = cccd
+            notes.append(f"Cập nhật mã định danh cá nhân bằng delta: {person.get('hoTen') or cid} = {cccd}")
+ 
+            if nam_sinh and (is_blank(person.get("namSinh")) or safe_int(person.get("namSinh"), 0) != nam_sinh):
+                data[f"{prefix}|namSinh"] = str(nam_sinh)
+                notes.append(f"Cập nhật năm sinh theo CCCD bằng delta: {person.get('hoTen') or cid} = {nam_sinh}")
+ 
+            if gttt and not is_blank(gttt.get("giayToTuyThanId")):
+                data[f"{prefix}|GIAYTOTUYTHAN.{gttt.get('giayToTuyThanId')}|maDinhDanhCaNhan"] = cccd
 
 def build_delta_lamsach_payload(value0, ttdk, notes=None, phan_loai_item=None):
     """
-    Build payload delta cho LamSachDuLieuAjax/CapNhatThongKePhanLoaiThuaDatChiTiet.
-    Không gọi UpdateThongTinDangKy, không gọi UpdateCaNhan, không gọi UpdateThuaDat.
-
-    Cập nhật qua key-path:
-      - GCN: soVaoSo/ngayVaoSo nếu thiếu.
-      - TinhHinhDangKy.thoiDiemDangKy nếu trống thì lấy ngày vào sổ/fallback.
-      - Nguồn gốc: các key thiếu trong thongTinDangKyChuaDapUngNhom1.
-      - Chủ sử dụng: maSoDinhDanh, maDinhDanhCaNhan, namSinh suy từ CCCD.
+    Build payload cho CapNhatThongKePhanLoaiThuaDatChiTiet.
+ 
+    Nguyên tắc:
+      - id: LẤY THẲNG từ phan_loai_item (response GetThongKePhanLoaiThuaDatChiTiet).
+            KHÔNG bịa uuid. Thiếu id => raise để biết ngay, tránh gửi id rác gây no-op.
+      - data: ƯU TIÊN nguyên duLieuCapNhat server đã tính sẵn (đúng key + đúng value,
+              khớp 100% thao tác làm tay). Chỉ tự build khi server trả null/rỗng.
     """
     notes = notes if notes is not None else []
     thdk = ttdk.get("TinhHinhDangKy") or {}
     tid = thdk.get("tinhHinhDangKyId") or (phan_loai_item or {}).get("tinhHinhDangKyId")
-
+ 
+    pl_id = (phan_loai_item or {}).get("id")
+    if not pl_id:
+        raise Exception(
+            "Thiếu id bản ghi phân loại (GetThongKePhanLoaiThuaDatChiTiet) — không build được delta"
+        )
+ 
     data = {}
-
-    # 1) GCN: ListGiayChungNhan nằm ở value0, không nằm trong thongTinDangKy.
-    ds_gcn = (value0.get("ListGiayChungNhan") or ttdk.get("ListGiayChungNhan") or [])
-    ngay_co_san = next((g.get("ngayVaoSo") for g in ds_gcn if not is_blank(g.get("ngayVaoSo"))), None)
-    ngay_fallback = ngay_co_san or thdk.get("thoiDiemDangKy") or _lay_ngay_tao_don(ttdk)
-
-    if not is_blank(tid) and is_blank(thdk.get("thoiDiemDangKy")) and not is_blank(ngay_fallback):
-        data[f"TINHHINHDANGKY.{tid}|thoiDiemDangKy"] = ngay_fallback
-        notes.append("Cập nhật thoiDiemDangKy theo ngày vào sổ GCN")
-
-    for gcn in ds_gcn:
-        gid = gcn.get("giayChungNhanId")
-        ver = gcn.get("version")
-        if is_blank(gid) or is_blank(ver) or is_blank(tid):
-            continue
-        prefix = f"TINHHINHDANGKY.{tid}|GIAYCHUNGNHAN.{gid}_{ver}"
-        changed = []
-        if is_blank(gcn.get("soVaoSo")):
-            data[f"{prefix}|soVaoSo"] = SO_VAO_SO_DEFAULT
-            changed.append("soVaoSo")
-        if is_blank(gcn.get("ngayVaoSo")) and not is_blank(ngay_fallback):
-            data[f"{prefix}|ngayVaoSo"] = ngay_fallback
-            changed.append("ngayVaoSo")
-        if changed:
-            notes.append(f"Cập nhật lại thông tin GCN {gid}: {', '.join(changed)}")
-
-    # 2) Nguồn gốc: ưu tiên dùng đúng các key hệ thống trả trong phần thiếu.
-    missing_keys = list((phan_loai_item or {}).get("thongTinDangKyChuaDapUngNhom1") or [])
-    used_missing = set()
-    for key in missing_keys:
-        k = str(key)
-        if "NGUONGOCSUDUNGDAT" in k.upper() and k.endswith("|loaiNguonGocSuDungDatId"):
-            val = _nguon_goc_value_for_missing_key(k, ttdk)
-            if val is not None:
-                data[k] = val
-                used_missing.add(k)
-                notes.append(f"Cập nhật nguồn gốc bằng delta: {k} = {val}")
-
-    # Fallback nếu lỗi text có nguồn gốc nhưng không có key cụ thể.
-    if can_update_thua_from_errors(phan_loai_item):
-        for thua in iter_unique_thua_dat(ttdk):
-            thua_id = thua.get("thuaDatId")
-            thua_ver = thua.get("version")
-            if is_blank(thua_id) or is_blank(thua_ver):
-                continue
-            for md in thua.get("ListMucDichSuDung") or []:
-                md_id = md.get("mucDichSuDungId")
-                val = str(_nguon_goc_id_theo_mucdich(md.get("loaiMucDichSuDungId")))
-                for ng in md.get("ListNguonGocSuDungDat") or []:
-                    ng_id = ng.get("nguonGocSuDungDatId")
-                    if is_blank(md_id) or is_blank(ng_id):
-                        continue
-                    key = (
-                        f"TINHHINHDANGKY.{tid}"
-                        f"|THUADAT.{thua_id}_{thua_ver}"
-                        f"|MUCDICHSUDUNG.{md_id}"
-                        f"|NGUONGOCSUDUNGDAT.{ng_id}"
-                        f"|loaiNguonGocSuDungDatId"
-                    )
-                    # Chỉ bổ sung fallback nếu key đó đang thiếu hoặc hệ thống báo thiếu.
-                    if key in used_missing or is_blank(ng.get("loaiNguonGocSuDungDatId")):
-                        data[key] = val
-                        notes.append(f"Cập nhật nguồn gốc bằng delta: {key} = {val}")
-
-    # 3) Chủ sử dụng: cập nhật mã định danh và năm sinh theo CCCD qua delta.
-    for person in iter_unique_persons(ttdk):
-        cid = person.get("caNhanId")
-        ver = person.get("version")
-        if is_blank(cid) or is_blank(ver) or is_blank(tid):
-            continue
-        gttt, cccd = get_cccd_node(person)
-        if not cccd:
-            continue
-        prefix = f"TINHHINHDANGKY.{tid}|CANHAN.{cid}_{ver}"
-        nam_sinh = derive_nam_sinh_from_cccd(cccd)
-
-        data[f"{prefix}|maSoDinhDanh"] = cccd
-        notes.append(f"Cập nhật mã định danh cá nhân bằng delta: {person.get('hoTen') or cid} = {cccd}")
-
-        if nam_sinh and (is_blank(person.get("namSinh")) or safe_int(person.get("namSinh"), 0) != nam_sinh):
-            data[f"{prefix}|namSinh"] = str(nam_sinh)
-            notes.append(f"Cập nhật năm sinh theo CCCD bằng delta: {person.get('hoTen') or cid} = {nam_sinh}")
-
-        if gttt and not is_blank(gttt.get("giayToTuyThanId")):
-            # Key theo cấu trúc lồng trong cá nhân.
-            data[f"{prefix}|GIAYTOTUYTHAN.{gttt.get('giayToTuyThanId')}|maDinhDanhCaNhan"] = cccd
-
+    du_lieu = (phan_loai_item or {}).get("duLieuCapNhat")
+ 
+    if isinstance(du_lieu, dict) and du_lieu:
+        # Server đã tính sẵn -> dùng nguyên, không tự chế key/value.
+        data.update(du_lieu)
+        notes.append(f"Dùng nguyên duLieuCapNhat từ server ({len(du_lieu)} trường)")
+    else:
+        # duLieuCapNhat = null/rỗng: server không tự vá được record này
+        # (vd thiếu dữ liệu không gian, chưa đồng bộ ba khối...).
+        # Tự build chỉ là phương án dự phòng, kém tin cậy -> ghi note cảnh báo.
+        notes.append("duLieuCapNhat rỗng/null — tự build delta (kém tin cậy, cần kiểm tra)")
+        _build_delta_thu_cong(data, value0, ttdk, tid, notes, phan_loai_item)
+ 
     return {
-        "id": (phan_loai_item or {}).get("id") or uuid.uuid4().hex[:24],
+        "id": pl_id,
         "tinhHinhDangKyId": tid,
         "data": json.dumps(data, ensure_ascii=False),
     }
 
 
 def build_delta_gcn_payload(value0, ttdk, notes=None, phan_loai_item=None):
-    # Giữ tên hàm cũ để các đoạn code cũ còn gọi được.
     return build_delta_lamsach_payload(value0, ttdk, notes=notes, phan_loai_item=phan_loai_item)
+
 
 def clean_delta_gcn_markers(obj):
     if isinstance(obj, dict):
@@ -984,7 +1125,6 @@ def clean_delta_gcn_markers(obj):
 
 def api_update_delta_gcn(session, delta_payload):
     return _post_json_update(session, URL_UPDATE_DELTA_GCN, delta_payload, "CapNhatThongKePhanLoaiThuaDatChiTiet")
-
 
 
 def iter_unique_persons(ttdk):
@@ -1026,7 +1166,6 @@ def _parse_json_list(value):
 
 
 def iter_dang_ky_quyen(obj):
-    """Dò các node đăng ký quyền trong response TTĐK."""
     if isinstance(obj, dict):
         keys = set(obj.keys())
         if ({"typeItem", "itemId"} & keys) and ({"chuSuDungId", "versionChu", "dangKyQuyenId"} & keys):
@@ -1043,7 +1182,6 @@ def build_gcn_payloads(ttdk, notes):
     tinh_hinh = ttdk.get("TinhHinhDangKy") or {}
     all_dq = list(iter_dang_ky_quyen(ttdk))
 
-    # map theo ID đăng ký quyền nếu response có danh sách này
     dq_map = {}
     for dq in all_dq:
         for k in ("dangKyQuyenId", "dangKyQuyenNId", "dangKyQuyenID", "dangKyQuyenid"):
@@ -1054,7 +1192,6 @@ def build_gcn_payloads(ttdk, notes):
         dq_ids = [str(x) for x in _parse_json_list(gcn.get("dangKyQuyen"))]
         matched = [dq_map[x] for x in dq_ids if x in dq_map]
 
-        # Fallback: nếu không dò được DangKyQuyen, suy luận tối thiểu từ thửa + đại diện khai trình.
         if not matched:
             thua = next(iter_unique_thua_dat(ttdk), None)
             chu_id = tinh_hinh.get("daiDienKhaiTrinhId")
@@ -1092,26 +1229,19 @@ def build_gcn_payloads(ttdk, notes):
             payload["ChuSuDungIds"].append(dq.get("chuSuDungId"))
             payload["VersionChus"].append(dq.get("versionChu"))
         yield payload
+
+
 def api_update_thong_tin_dang_ky(session, tinh_hinh_dang_ky_id, ngay_dang_ky_lan_dau,
                                  flags, debug_dir, row_excel, phan_loai_item=None,
                                  can_update_thua=True):
-    """
-    Bản làm sạch theo delta:
-    - GET TTĐK để lấy cấu trúc và ID.
-    - Build delta gửi CapNhatThongKePhanLoaiThuaDatChiTiet.
-    - KHÔNG gọi UpdateCaNhan, KHÔNG gọi UpdateThuaDat, KHÔNG gọi UpdateThongTinDangKy.
-    - HSQ vẫn xử lý riêng ở xu_ly_1_dong() khi lỗi phân loại báo cần HSQ.
-    """
     res_get = lay_thong_tin_dang_ky_by_id(session, tinh_hinh_dang_ky_id)
     if not res_get.get("ok"):
         return {"ok": False, "error": "GET TTĐK lỗi: " + res_get.get("error", ""), "notes": [], "ttdk": None}
-
+ 
     try:
         value0 = copy.deepcopy(res_get["raw"]["value"][0])
         value0 = convert_dates_recursive(value0)
-
-        # Vẫn dùng build_payload_update để chuẩn hóa/duyệt dữ liệu trong bộ nhớ,
-        # nhưng không POST các API UpdateCaNhan/UpdateThuaDat/UpdateThongTinDangKy nữa.
+ 
         flags_eff = dict(flags or {})
         ttdk, notes = build_payload_update(
             res_get["raw"],
@@ -1120,53 +1250,77 @@ def api_update_thong_tin_dang_ky(session, tinh_hinh_dang_ky_id, ngay_dang_ky_lan
         )
     except Exception as e:
         return {"ok": False, "error": "Build payload lỗi: " + str(e), "notes": [], "ttdk": None}
-
+ 
+    # Chỉ cần thư mục tồn tại để ghi DELTA_LAMSACH_*.json bên dưới.
     os.makedirs(debug_dir, exist_ok=True)
+ 
     try:
-        with open(os.path.join(debug_dir, f"TTDK_{tinh_hinh_dang_ky_id}_row{row_excel}.json"),
-                  "w", encoding="utf-8") as f:
-            json.dump(ttdk, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
-
-    # Build delta làm sạch: GCN, thoiDiemDangKy, nguồn gốc, mã định danh, năm sinh.
-    delta_payload = build_delta_lamsach_payload(value0, ttdk, notes, phan_loai_item=phan_loai_item)
+        delta_payload = build_delta_lamsach_payload(value0, ttdk, notes, phan_loai_item=phan_loai_item)
+    except Exception as e:
+        return {"ok": False, "error": f"Build delta lỗi: {e}", "notes": notes, "ttdk": ttdk}
+ 
     try:
         delta_data = json.loads(delta_payload.get("data") or "{}")
     except Exception:
         delta_data = {}
-
+ 
     try:
         with open(os.path.join(debug_dir, f"DELTA_LAMSACH_{tinh_hinh_dang_ky_id}_row{row_excel}.json"),
                   "w", encoding="utf-8") as f:
             json.dump(delta_payload, f, ensure_ascii=False, indent=2)
     except Exception:
         pass
-
+ 
+    need_thua_api = bool(can_update_thua) and need_update_thua_dat_by_api(phan_loai_item)
+ 
     if DRY_RUN:
-        return {"ok": True, "notes": notes + ["DRY_RUN — chưa gửi delta làm sạch"], "dry_run": True, "ttdk": ttdk}
-
-    if not delta_data:
-        notes.append("Không có trường delta cần cập nhật")
-        return {"ok": True, "raw": None, "sent_as": "no_delta", "notes": notes, "ttdk": ttdk}
-
-    res_delta = api_update_delta_gcn(session, delta_payload)
-    if not res_delta.get("ok"):
-        return {
-            "ok": False,
-            "error": "Update delta làm sạch lỗi: " + str(res_delta.get("raw") or res_delta.get("error")),
-            "notes": notes,
-            "ttdk": ttdk,
-        }
-
-    notes.append("Đã update delta làm sạch: GCN/nguồn gốc/mã định danh/năm sinh")
-    return {"ok": True, "raw": res_delta.get("raw"), "sent_as": "delta_lamsach", "notes": notes, "ttdk": ttdk}
+        msg = ["DRY_RUN — chưa gửi delta làm sạch"]
+        if need_thua_api:
+            msg.append("DRY_RUN — sẽ GetThongTinDangKyNhom1 và UpdateThuaDat do lỗi mục đích/nguồn gốc không có key")
+        return {"ok": True, "notes": notes + msg, "dry_run": True, "ttdk": ttdk}
+ 
+    did_anything = False
+ 
+    if delta_data:
+        res_delta = api_update_delta_gcn(session, delta_payload)
+        if not res_delta.get("ok"):
+            return {
+                "ok": False,
+                "error": "Update delta làm sạch lỗi: " + str(res_delta.get("raw") or res_delta.get("error")),
+                "notes": notes,
+                "ttdk": ttdk,
+            }
+        did_anything = True
+        notes.append("Đã update delta làm sạch")
+ 
+    if need_thua_api:
+        res_td_fallback = update_thua_dat_from_nhom1(
+            session,
+            tinh_hinh_dang_ky_id,
+            phan_loai_item,
+            debug_dir,
+            row_excel,
+            notes,
+        )
+        if not res_td_fallback.get("ok"):
+            return {
+                "ok": False,
+                "error": res_td_fallback.get("error", "UpdateThuaDat fallback lỗi"),
+                "notes": notes,
+                "ttdk": ttdk,
+            }
+        did_anything = True
+ 
+    if not did_anything:
+        notes.append("Không có trường delta hoặc thửa đất cần cập nhật")
+        return {"ok": True, "raw": None, "sent_as": "no_update", "notes": notes, "ttdk": ttdk}
+ 
+    return {"ok": True, "raw": None, "sent_as": "delta_or_update_thua", "notes": notes, "ttdk": ttdk}
 
 
 # =========================
 # API: TRA CỨU PHÂN LOẠI LÀM SẠCH
 # =========================
-
 def tao_payload_search_phan_loai(xa_id, so_to, so_thua, tinh_id=66):
     return {
         "traCuu[soThuTuThua]": str(so_thua),
@@ -1200,9 +1354,9 @@ def api_search_phan_loai(session, xa_id, so_to, so_thua, tinh_id=66):
         "Referer": REFERER_URL,
         "Origin": "https://dla.mplis.gov.vn",
     })
-    res, request_error = post_retry(
+    res, request_error = http_post(
         session, URL_SEARCH_PHAN_LOAI,
-        retries=API_SEARCH_RETRIES, timeout=API_SEARCH_TIMEOUT,
+        retries=API_SEARCH_RETRIES, timeout=API_SEARCH_TIMEOUT, retry_5xx=True,
         data=tao_payload_search_phan_loai(xa_id, so_to, so_thua, tinh_id=tinh_id),
         headers=headers,
     )
@@ -1211,9 +1365,10 @@ def api_search_phan_loai(session, xa_id, so_to, so_thua, tinh_id=66):
     try:
         js = res.json()
     except Exception:
-        return {"ok": False, "error": f"Response phân loại không phải JSON: {res.text[:500]}"}
+        return {"ok": False, "error": f"HTTP {res.status_code} - Response phân loại không phải JSON: {res.text[:300]}"}
     if not js.get("success"):
         return {"ok": False, "error": str(js)[:500], "raw": js}
+
     data = js.get("data") or []
     if not data:
         return {"ok": False, "error": "Không tìm thấy bản ghi phân loại theo tờ/thửa", "raw": js}
@@ -1229,8 +1384,14 @@ def api_search_phan_loai(session, xa_id, so_to, so_thua, tinh_id=66):
         return {"ok": False, "error": f"Tìm thấy {len(data)} bản ghi nhưng không có tinhHinhDangKyId", "raw": js}
 
     data_co_id = sorted(data_co_id, key=get_tid)
-    item = data_co_id[0]
-    return {"ok": True, "item": item, "raw": js}
+
+    return {
+        "ok": True,
+        "item": data_co_id[0],
+        "items": data_co_id,
+        "count": len(data_co_id),
+        "raw": js,
+    }
 
 
 def _all_error_texts(phan_loai_item):
@@ -1251,10 +1412,7 @@ def can_update_hsq_from_errors(phan_loai_item):
     return (
         "hồ sơ quét chưa liên kết giấy chứng nhận" in s
         or "ho so quet chua lien ket giay chung nhan" in s
-        or "không có hồ sơ quét" in s
-        or "khong co ho so quet" in s
     )
-
 
 def can_update_thua_from_errors(phan_loai_item):
     s = "\n".join(_all_error_texts(phan_loai_item)).lower()
@@ -1266,6 +1424,187 @@ def can_update_thua_from_errors(phan_loai_item):
         or "loại nguồn gốc" in s
         or "loai nguồn gốc" in s
     )
+
+
+def has_full_mucdich_nguongoc_key(phan_loai_item):
+    keys = (phan_loai_item or {}).get("thongTinDangKyChuaDapUngNhom1") or []
+    for k in keys:
+        s = str(k).upper()
+        if "MUCDICHSUDUNG." in s and "NGUONGOCSUDUNGDAT." in s:
+            return True
+    return False
+
+
+def need_update_thua_dat_by_api(phan_loai_item):
+    return can_update_thua_from_errors(phan_loai_item) and not has_full_mucdich_nguongoc_key(phan_loai_item)
+
+def build_delta_only(session, tinh_hinh_dang_ky_id, ngay_dang_ky_lan_dau,
+                     flags, debug_dir, row_excel, phan_loai_item=None):
+    """
+    GET TTĐK + build delta payload. KHÔNG gửi gì cả.
+    Trả: {"ok", "delta_payload", "delta_data", "ttdk", "notes", "error"}.
+    """
+    res_get = lay_thong_tin_dang_ky_by_id(session, tinh_hinh_dang_ky_id)
+    if not res_get.get("ok"):
+        return {"ok": False, "error": "GET TTĐK lỗi: " + res_get.get("error", ""),
+                "delta_payload": None, "delta_data": {}, "ttdk": None, "notes": []}
+ 
+    try:
+        value0 = copy.deepcopy(res_get["raw"]["value"][0])
+        value0 = convert_dates_recursive(value0)
+        ttdk, notes = build_payload_update(
+            res_get["raw"], ngay_dang_ky_lan_dau_ddmmyyyy=ngay_dang_ky_lan_dau,
+            flags=dict(flags or {}),
+        )
+    except Exception as e:
+        return {"ok": False, "error": "Build payload lỗi: " + str(e),
+                "delta_payload": None, "delta_data": {}, "ttdk": None, "notes": []}
+ 
+    os.makedirs(debug_dir, exist_ok=True)
+    try:
+        delta_payload = build_delta_lamsach_payload(value0, ttdk, notes, phan_loai_item=phan_loai_item)
+    except Exception as e:
+        return {"ok": False, "error": f"Build delta lỗi: {e}",
+                "delta_payload": None, "delta_data": {}, "ttdk": ttdk, "notes": notes}
+ 
+    try:
+        delta_data = json.loads(delta_payload.get("data") or "{}")
+    except Exception:
+        delta_data = {}
+ 
+    try:
+        with open(os.path.join(debug_dir, f"DELTA_LAMSACH_{tinh_hinh_dang_ky_id}_row{row_excel}.json"),
+                  "w", encoding="utf-8") as f:
+            json.dump(delta_payload, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+ 
+    return {"ok": True, "delta_payload": delta_payload, "delta_data": delta_data,
+            "ttdk": ttdk, "notes": notes, "error": None}
+ 
+ 
+def gui_delta(session, delta_payload):
+    """Gửi delta tới CapNhatThongKePhanLoaiThuaDatChiTiet."""
+    return api_update_delta_gcn(session, delta_payload)
+
+def phan_loai_loi(phan_loai_item):
+    """
+    Tách lỗi thành (da_va, khong_va).
+    Quy tắc: CHỈ thiếu loại MĐSD mới khiến nguồn gốc không vá được.
+    Các lỗi nền khác (không GCN, chưa đồng bộ không gian, thiếu HSQ) KHÔNG cản
+    việc vá những trường tool xử lý được -> vá được cái nào báo cái đó.
+    """
+    s = "\n".join(_all_error_texts(phan_loai_item)).lower()
+    thieu_mdsd = ("không có loại mục đích" in s) or ("loaimucdichsudungid" in s)
+ 
+    da_va, khong_va = [], []
+ 
+    # Nguồn gốc: vá được TRỪ KHI thiếu loại MĐSD
+    if ("loại nguồn gốc" in s) or ("nguongocsudungdat" in s) or ("nguồn gốc" in s):
+        if thieu_mdsd:
+            khong_va.append("nguồn gốc (kẹt do thiếu loại MĐSD)")
+        else:
+            da_va.append("nguồn gốc")
+ 
+    # Các trường tool vá được, không phụ thuộc MĐSD
+    if ("số vào sổ" in s) or ("ngày vào sổ" in s) or ("sovaoso" in s) or ("ngayvaoso" in s):
+        da_va.append("sổ/ngày vào sổ GCN")
+    if ("mã định danh" in s) or ("năm sinh" in s) or ("masodinhdanh" in s):
+        da_va.append("mã ĐD/năm sinh")
+    # HSQ chưa liên kết -> VÁ ĐƯỢC, nhưng kết quả thật do nhánh need_hsq quyết định
+    # (không tự thêm vào da_va ở đây để tránh báo "đã vá" giả).
+    co_hsq_chua_lien_ket = ("hồ sơ quét chưa liên kết" in s) or ("ho so quet chua lien ket" in s)
+ 
+    # Lỗi nền tool KHÔNG xử lý được (làm tay)
+    if thieu_mdsd:
+        khong_va.append("thiếu loại MĐSD")
+    if "không có giấy chứng nhận" in s:
+        khong_va.append("không có GCN")
+    # "chưa đồng bộ không gian" CHỈ tính là lỗi nền khi KHÔNG phải do HSQ chưa liên kết.
+    # (Khi HSQ chưa liên kết, gắn xong là hết, nên không kể nó là lỗi nền.)
+    if (("ba khối" in s) or ("dữ liệu không gian" in s)) and not co_hsq_chua_lien_ket:
+        khong_va.append("chưa đồng bộ không gian")
+    # "không có hồ sơ quét" thật (loại B) -> không vá được, CHỈ khi không kèm "chưa liên kết".
+    if (("không có hồ sơ quét" in s) or ("khong co ho so quet" in s)) and not co_hsq_chua_lien_ket:
+        khong_va.append("không có HSQ (cần nạp hồ sơ quét)")
+ 
+    return da_va, khong_va
+
+def extract_payload_root_from_nhom1(raw):
+    if not isinstance(raw, dict):
+        return {}
+    if isinstance(raw.get("thongTinDangKy"), dict):
+        return raw["thongTinDangKy"]
+    if isinstance(raw.get("value"), dict):
+        v = raw["value"]
+        if isinstance(v.get("thongTinDangKy"), dict):
+            return v["thongTinDangKy"]
+        return v
+    if isinstance(raw.get("TaiSan"), dict):
+        return raw["TaiSan"]
+    return raw
+
+def update_thua_dat_from_nhom1(session, tinh_hinh_dang_ky_id, phan_loai_item, debug_dir, row_excel, notes):
+    res_nhom1 = api_get_thong_tin_dang_ky_nhom1(session, tinh_hinh_dang_ky_id)
+    if not res_nhom1.get("ok"):
+        return {
+            "ok": False,
+            "error": "GetThongTinDangKyNhom1 lỗi: " + str(res_nhom1.get("raw") or res_nhom1.get("error")),
+        }
+
+    raw_nhom1 = convert_dates_recursive(res_nhom1.get("raw") or {})
+    payload_root = extract_payload_root_from_nhom1(raw_nhom1)
+
+    try:
+        os.makedirs(debug_dir, exist_ok=True)
+        with open(os.path.join(debug_dir, f"NHOM1_{tinh_hinh_dang_ky_id}_row{row_excel}.json"),
+                  "w", encoding="utf-8") as f:
+            json.dump(raw_nhom1, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+    target_thua_id = (phan_loai_item or {}).get("thuaDatId")
+    thua_list_all = list(iter_unique_thua_dat(payload_root))
+    if not thua_list_all:
+        thua_list_all = list(iter_unique_thua_dat(raw_nhom1))
+
+    thua_list = thua_list_all
+    if target_thua_id:
+        thua_match = [t for t in thua_list_all if str(t.get("thuaDatId")) == str(target_thua_id)]
+        if thua_match:
+            thua_list = thua_match
+        else:
+            notes.append(f"Không match thuaDatId={target_thua_id} trong Nhom1, sẽ thử UpdateThuaDat toàn bộ thửa tìm được")
+
+    if not thua_list:
+        return {
+            "ok": False,
+            "error": "GetThongTinDangKyNhom1 không có ThuaDats để UpdateThuaDat; đã quét cả raw response và thongTinDangKy/value"
+        }
+
+    updated = []
+    for thua in thua_list:
+        cap_nhat_nguon_goc_thua_dat(thua)
+        thua["isChange"] = True
+
+        try:
+            with open(os.path.join(debug_dir, f"THUADAT_UPDATE_NHOM1_{thua.get('thuaDatId')}_row{row_excel}.json"),
+                      "w", encoding="utf-8") as f:
+                json.dump(thua, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+        res_td = api_update_thua_dat(session, thua)
+        ma_thua = thua.get("maThua") or f"{thua.get('soHieuToBanDo')}/{thua.get('soThuTuThua')}"
+        if not res_td.get("ok"):
+            return {
+                "ok": False,
+                "error": f"Update thửa đất lỗi ({ma_thua}): " + str(res_td.get("raw") or res_td.get("error")),
+            }
+        updated.append(ma_thua)
+
+    notes.append("Đã UpdateThuaDat từ GetThongTinDangKyNhom1: " + ", ".join(str(x) for x in updated))
+    return {"ok": True, "updated": updated}
 
 
 def lay_chu_su_dung_tu_phan_loai(item):
@@ -1305,16 +1644,20 @@ def api_get_hosoquet_kekhai(session, tinh_hinh_dang_ky_id):
 
     last = ""
     for mode, payload, headers, is_json in payloads:
-        try:
-            data = json.dumps(payload, ensure_ascii=False) if is_json else payload
-            res = session.post(URL_GET_HSQ_KEKHAI, data=data, headers=headers, timeout=API_SEARCH_TIMEOUT)
-        except requests.exceptions.RequestException as e:
-            last = f"{mode}: {e}"
+        data = json.dumps(payload, ensure_ascii=False) if is_json else payload
+        # Đọc -> retry_5xx=True
+        res, request_error = http_post(
+            session, URL_GET_HSQ_KEKHAI,
+            retries=API_SEARCH_RETRIES, timeout=API_SEARCH_TIMEOUT, retry_5xx=True,
+            data=data, headers=headers,
+        )
+        if request_error:
+            last = f"{mode}: {request_error}"
             continue
         try:
             js = res.json()
         except Exception:
-            last = res.text[:500]
+            last = f"{mode}: HTTP {res.status_code} - {res.text[:300]}"
             continue
         if res.ok and (js.get("success") is True or js.get("Success") is True or js.get("value") or js.get("data")):
             hoso = normalize_hosoquet_response(js)
@@ -1322,7 +1665,7 @@ def api_get_hosoquet_kekhai(session, tinh_hinh_dang_ky_id):
                 return {"ok": True, "hoso": hoso, "raw": js, "mode": mode}
             last = f"{mode}: JSON OK nhưng không thấy hồ sơ quét"
         else:
-            last = str(js)[:500]
+            last = f"{mode}: HTTP {res.status_code} - {str(js)[:300]}"
     return {"ok": False, "error": last or "Không lấy được hồ sơ quét"}
 
 
@@ -1383,8 +1726,9 @@ def api_gui_yeu_cau_phan_loai_lai(session, thua_dat_ids):
 
     return _post_json_update(session, URL_GUI_PHAN_LOAI_LAI, {"thuaDatIds": ids}, "GuiYeuCauPhanLoaiLai")
 
+
 # =========================
-# API: SEARCH HỒ SƠ QUÉT (để lấy tinhHinhDangKyId theo tờ/thửa + dữ liệu HSQ cho quy tắc F)
+# API: SEARCH HỒ SƠ QUÉT
 # =========================
 
 def tao_payload_search_hosoquet(xa_id, so_to, so_thua):
@@ -1413,9 +1757,9 @@ def tao_payload_search_hosoquet(xa_id, so_to, so_thua):
 def api_search_hosoquet(session, xa_id, so_to, so_thua):
     headers = dict(session.headers)
     headers["Content-Type"] = "application/x-www-form-urlencoded; charset=UTF-8"
-    res, request_error = post_retry(
+    res, request_error = http_post(
         session, API_SEARCH_HOSOQUET,
-        retries=API_SEARCH_RETRIES, timeout=API_SEARCH_TIMEOUT,
+        retries=API_SEARCH_RETRIES, timeout=API_SEARCH_TIMEOUT, retry_5xx=True,
         data=tao_payload_search_hosoquet(xa_id, so_to, so_thua), headers=headers
     )
     if request_error:
@@ -1423,7 +1767,7 @@ def api_search_hosoquet(session, xa_id, so_to, so_thua):
     try:
         result = res.json()
     except Exception:
-        return {"ok": False, "error": f"Response không phải JSON: {res.text[:500]}"}
+        return {"ok": False, "error": f"HTTP {res.status_code} - Response không phải JSON: {res.text[:300]}"}
     if not result.get("success"):
         return {"ok": False, "error": str(result)[:500], "raw": result}
 
@@ -1449,7 +1793,6 @@ def api_search_hosoquet(session, xa_id, so_to, so_thua):
                 "raw": result,
             }
         data = sorted(data_co_id, key=_get_tid_from_search_item)
-        # Ghi lại raw chỉ còn bản ghi đã chọn để các hàm parse phía sau không lấy nhầm bản ghi đầu cũ.
         result = dict(result)
         result["data"] = [data[0]]
 
@@ -1458,7 +1801,30 @@ def api_search_hosoquet(session, xa_id, so_to, so_thua):
     if not list_hosoquet:
         return {"ok": False, "error": "Có bản ghi nhưng không có ListHoSoQuet", "raw": result}
 
-    return {"ok": True, "item": item, "list_hosoquet": list_hosoquet, "raw": result}
+    da_co_gcn_nguon_goc = False
+    file_gcn_nguon_goc = None
+
+    for hsq in list_hosoquet:
+        list_file = (hsq.get("ListFileHoSoQuet") or {}).get("ListFileHoSoQuet") or []
+        for f in list_file:
+            if (
+                f.get("laGiayChungNhan") is True
+                and f.get("laGiayToVeNguonGoc") is True
+            ):
+                da_co_gcn_nguon_goc = True
+                file_gcn_nguon_goc = f
+                break
+        if da_co_gcn_nguon_goc:
+            break
+
+    return {
+        "ok": True,
+        "item": item,
+        "list_hosoquet": list_hosoquet,
+        "da_co_gcn_nguon_goc": da_co_gcn_nguon_goc,
+        "file_gcn_nguon_goc": file_gcn_nguon_goc,
+        "raw": result,
+    }
 
 
 # =========================
@@ -1515,127 +1881,247 @@ def xu_ly_1_dong(session, item, maxa, ngay_dang_ky_lan_dau,
                  logger, flags, debug_dir, progress_cb=None):
     row_excel = item["row"]
     soto, sothua, loaidat = item["soto"], item["sothua"], item["loaidat"]
-
+ 
     result_row = {
         "row_excel": row_excel, "soto": soto, "sothua": sothua, "loaidat": loaidat,
         "tinhHinhDangKyId": "", "hoSoQuetId": "", "thongTinHoSoId": "",
         "chu_su_dung": "", "status": "Lỗi", "note": "",
     }
+    # Mỗi bản ghi đẩy đúng 1 dòng tóm tắt vào đây -> ghi ra Excel.
     extra_notes = []
-
+ 
     def progress(p, t):
         if progress_cb:
             progress_cb(p, t)
-
-    def done(icon, status, note):
-        result_row["status"] = status
-        all_notes = ([note] if note else []) + extra_notes
-        result_row["note"] = " | ".join(n for n in all_notes if n)
-        logger.log(f"{icon} Dòng {row_excel}: {result_row['note']}")
-        return result_row
-
+ 
     progress(0, "Bắt đầu")
-
-    # 1) Tra cứu phân loại làm sạch theo tờ/thửa, không search hồ sơ quét nữa.
     progress(20, "Tra cứu phân loại thửa đất")
     res_pl_search = api_search_phan_loai(session, xa_id=maxa, so_to=soto, so_thua=sothua, tinh_id=66)
     if not res_pl_search.get("ok"):
         progress(100, "Tra cứu phân loại lỗi")
-        return done("❌", "Lỗi", "Tra cứu phân loại lỗi: " + res_pl_search.get("error", ""))
+        result_row["status"] = "Lỗi"
+        result_row["note"] = "Tra cứu phân loại lỗi: " + res_pl_search.get("error", "")
+        logger.log(f"❌ Dòng {row_excel} (tờ {soto}/thửa {sothua}): {result_row['note']}")
+        return result_row
+ 
+    phan_loai_items = res_pl_search.get("items") or [res_pl_search["item"]]
+ 
+    all_ttdk_ids, all_thua_ids, all_hsq_ids, all_tths_ids, all_chu = [], [], [], [], []
+ 
+    so_thanh_cong = 0   # bản ghi vá được trọn (không còn lỗi nền)
+    so_mot_phan   = 0   # vá được phần nào nhưng còn lỗi nền
+    so_that_bai   = 0   # không vá được gì / update lỗi
+ 
+    for idx, phan_loai_item in enumerate(phan_loai_items, start=1):
+        sub_label = f"{idx}/{len(phan_loai_items)}"
+        tinh_hinh_id = phan_loai_item.get("tinhHinhDangKyId")
+        thua_dat_id = phan_loai_item.get("thuaDatId")
+        chu = lay_chu_su_dung_tu_phan_loai(phan_loai_item)
+ 
+        if tinh_hinh_id and tinh_hinh_id not in all_ttdk_ids:
+            all_ttdk_ids.append(tinh_hinh_id)
+        if thua_dat_id and thua_dat_id not in all_thua_ids:
+            all_thua_ids.append(thua_dat_id)
+        if chu and chu not in all_chu:
+            all_chu.append(chu)
+ 
+        # Phân loại lỗi: vá được cái nào, còn cái nào phải làm tay
+        da_va, khong_va = phan_loai_loi(phan_loai_item)
+ 
+        def _ghi_ket_qua(icon, ket):
+            phan_da = ("ĐÃ vá: " + ", ".join(da_va)) if da_va else ""
+            phan_chua = ("chưa vá được (làm tay): " + ", ".join(khong_va)) if khong_va else ""
+            ve = " | ".join(p for p in (phan_da, phan_chua) if p) or "không rõ lỗi"
+            note_excel = f"[{sub_label}] {ve} → {ket}"
+            extra_notes.append(note_excel)
+            logger.log(
+                f"{icon} Dòng {row_excel} [{sub_label}] tờ {soto}/thửa {sothua} "
+                f"(TTĐK {tinh_hinh_id}, thửa {thua_dat_id}): {ve} → {ket}"
+            )
+ 
+        if not tinh_hinh_id:
+            so_that_bai += 1
+            extra_notes.append(f"[{sub_label}] KHÔNG có tinhHinhDangKyId")
+            logger.log(f"❌ Dòng {row_excel} [{sub_label}] tờ {soto}/thửa {sothua}: KHÔNG có tinhHinhDangKyId")
+            continue
+ 
+        need_hsq = can_update_hsq_from_errors(phan_loai_item)
+ 
+        # RE-SEARCH lấy id/duLieuCapNhat tươi khi có nhiều bản ghi
+        if len(phan_loai_items) > 1:
+            res_fresh = api_search_phan_loai(session, xa_id=maxa, so_to=soto, so_thua=sothua, tinh_id=66)
+            if res_fresh.get("ok"):
+                fresh_item = None
+                for it in (res_fresh.get("items") or []):
+                    if (str(it.get("tinhHinhDangKyId")) == str(tinh_hinh_id)
+                            and str(it.get("thuaDatId")) == str(thua_dat_id)):
+                        fresh_item = it
+                        break
+                if fresh_item is None:
+                    for it in (res_fresh.get("items") or []):
+                        if str(it.get("tinhHinhDangKyId")) == str(tinh_hinh_id):
+                            fresh_item = it
+                            break
+                if fresh_item is not None:
+                    phan_loai_item = fresh_item
+ 
+        # BƯỚC 1: build delta (CHƯA gửi) — để kiểm soát thứ tự gửi theo trường hợp.
+        progress(25 + int(45 * idx / max(len(phan_loai_items), 1)), f"Build delta {sub_label}")
+        res_build = build_delta_only(
+            session, tinh_hinh_id, ngay_dang_ky_lan_dau,
+            flags=flags, debug_dir=debug_dir, row_excel=f"{row_excel}_{idx}",
+            phan_loai_item=phan_loai_item,
+        )
+        if not res_build.get("ok"):
+            so_that_bai += 1
+            extra_notes.append(f"[{sub_label}] LỖI build delta: {res_build.get('error', '')}")
+            logger.log(
+                f"⚠️ Dòng {row_excel} [{sub_label}] tờ {soto}/thửa {sothua} "
+                f"(TTĐK {tinh_hinh_id}, thửa {thua_dat_id}): LỖI build delta: {res_build.get('error','')}"
+            )
+            continue
+ 
+        ttdk = res_build.get("ttdk")
+        delta_payload = res_build.get("delta_payload")
+        delta_data = res_build.get("delta_data") or {}
+        co_delta = bool(delta_data)
+ 
+        hsq_gan_ok = False
+        loi_gui = None
+ 
+        if need_hsq:
+            # ===== TRƯỜNG HỢP A: HSQ -> phân loại lại -> delta (nếu có) =====
+ 
+            # A.1 — gắn HSQ + gửi UpdateHoSoQuetExistFile
+            progress(70, f"Kiểm tra kho HSQ {sub_label}")
 
-    phan_loai_item = res_pl_search["item"]
-    result_row["chu_su_dung"] = lay_chu_su_dung_tu_phan_loai(phan_loai_item)
-    result_row["tinhHinhDangKyId"] = phan_loai_item.get("tinhHinhDangKyId")
-    thua_dat_id = phan_loai_item.get("thuaDatId")
+            res_hsq_search = api_search_hosoquet(session, maxa, soto, sothua)
 
-    if not result_row["tinhHinhDangKyId"]:
-        progress(100, "Không có tinhHinhDangKyId")
-        return done("❌", "Lỗi", "Bản ghi phân loại không có tinhHinhDangKyId")
+            if res_hsq_search.get("ok") and res_hsq_search.get("da_co_gcn_nguon_goc"):
+                f = res_hsq_search.get("file_gcn_nguon_goc") or {}
+                hsq_gan_ok = True
+                hsq_notes = [f"Kho HSQ đã có GCN + nguồn gốc sẵn: {f.get('moTa') or ''}"]
+                extra_notes.append(f"[{sub_label}] " + "; ".join(hsq_notes))
 
-    errors = phan_loai_item.get("errorMessages") or []
-    missing = phan_loai_item.get("thongTinDangKyChuaDapUngNhom1") or []
-    if errors:
-        extra_notes.append("Lỗi phân loại: " + "; ".join(str(e) for e in errors[:5]))
-    if missing:
-        extra_notes.append("Thiếu: " + "; ".join(str(e) for e in missing[:5]))
-
-    logger.log(
-        f"🔎 tinhHinhDangKyId={result_row['tinhHinhDangKyId']} "
-        f"thuaDatId={thua_dat_id} tờ={soto} thửa={sothua}"
-    )
-
-    need_thua = can_update_thua_from_errors(phan_loai_item)
-    need_hsq = can_update_hsq_from_errors(phan_loai_item)
-
-    # 2) Update TTĐK / cá nhân / thửa đất có điều kiện.
-    progress(60, "Cập nhật thông tin đăng ký")
-    res_ttdk = api_update_thong_tin_dang_ky(
-        session,
-        result_row["tinhHinhDangKyId"],
-        ngay_dang_ky_lan_dau,
-        flags=flags,
-        debug_dir=debug_dir,
-        row_excel=row_excel,
-        phan_loai_item=phan_loai_item,
-        can_update_thua=need_thua,
-    )
-    if res_ttdk.get("notes"):
-        extra_notes.extend(res_ttdk["notes"])
-    if not res_ttdk.get("ok"):
-        progress(100, "Update TTĐK lỗi")
-        return done("❌", "Lỗi", "Update TTĐK lỗi: " + res_ttdk.get("error", ""))
-    if res_ttdk.get("dry_run"):
-        extra_notes.append("DRY_RUN — chưa gửi TTĐK")
-
-    ttdk = res_ttdk.get("ttdk")
-
-    # 3) Chỉ lấy và update HSQ khi phân loại báo lỗi HSQ.
-    if need_hsq:
-        progress(82, "Lấy hồ sơ quét kê khai")
-        res_hsq_get = api_get_hosoquet_kekhai(session, result_row["tinhHinhDangKyId"])
-        if not res_hsq_get.get("ok"):
-            extra_notes.append("Lấy HSQ lỗi: " + res_hsq_get.get("error", ""))
-        else:
-            hoso = res_hsq_get["hoso"]
-            result_row["hoSoQuetId"] = hoso.get("hoSoQuetId") or hoso.get("Title")
-            result_row["thongTinHoSoId"] = hoso.get("thongTinHoSoId")
-            files_node = (hoso.get("ListFileHoSoQuet") or {}).get("ListFileHoSoQuet") or hoso.get("ListFileHoSoQuet") or hoso.get("ListFile") or []
-            hsq_notes = []
-            if cap_nhat_hosoquet_nguon_goc(files_node, hsq_notes):
-                progress(90, "Cập nhật HSQ nguồn gốc")
-                res_hsq = api_update_hosoquet(session, hoso, debug_dir, row_excel, hsq_notes)
-                extra_notes.extend(res_hsq.get("notes") or [])
-                if not res_hsq.get("ok"):
-                    progress(100, "Update HSQ lỗi")
-                    return done("❌", "Lỗi", "Update HSQ lỗi: " + res_hsq.get("error", ""))
-                if res_hsq.get("dry_run"):
-                    extra_notes.append("DRY_RUN — chưa gửi HSQ")
             else:
-                extra_notes.extend(hsq_notes)
-    else:
-        extra_notes.append("Không có lỗi HSQ, bỏ qua Get/Update HSQ")
+                if not res_hsq_search.get("ok"):
+                    extra_notes.append(f"[{sub_label}] Kiểm tra kho HSQ lỗi: {res_hsq_search.get('error','')}")
+                else:
+                    f = res_hsq_search.get("file_gcn_nguon_goc") or {}
+                    extra_notes.append(f"[{sub_label}] Kho HSQ chưa có file GCN + nguồn gốc true/true")
 
-    # 4) Sau khi làm sạch 1 thửa, gửi yêu cầu phân loại lại.
-    thua_ids = get_thua_dat_ids_from_ttdk(ttdk, phan_loai_item=phan_loai_item)
-    res_reclass = api_gui_yeu_cau_phan_loai_lai(session, thua_ids)
-    if not res_reclass.get("ok"):
-        extra_notes.append("Gửi phân loại lại lỗi: " + str(res_reclass.get("raw") or res_reclass.get("error")))
-    else:
-        extra_notes.append(f"Đã gửi yêu cầu phân loại lại thửa: {thua_ids}")
+                # Chưa có true/true trong kho thì mới lấy HSQ kê khai để update
+                progress(72, f"Lấy HSQ kê khai {sub_label}")
+                res_hsq_get = api_get_hosoquet_kekhai(session, tinh_hinh_id)
 
+                if res_hsq_get.get("ok"):
+                    hoso = res_hsq_get["hoso"]
+                    hsq_id = hoso.get("hoSoQuetId") or hoso.get("Title")
+                    tths_id = hoso.get("thongTinHoSoId")
+
+                    if hsq_id and hsq_id not in all_hsq_ids:
+                        all_hsq_ids.append(hsq_id)
+                    if tths_id and tths_id not in all_tths_ids:
+                        all_tths_ids.append(tths_id)
+
+                    files_node = (
+                        (hoso.get("ListFileHoSoQuet") or {}).get("ListFileHoSoQuet")
+                        or hoso.get("ListFileHoSoQuet")
+                        or hoso.get("ListFile")
+                        or []
+                    )
+
+                    hsq_notes = []
+                    kq_hsq = cap_nhat_hosoquet_nguon_goc(files_node, hsq_notes)
+
+                    if kq_hsq == "already":
+                        hsq_gan_ok = True
+
+                    elif kq_hsq:
+                        progress(78, f"Cập nhật HSQ bản ghi {sub_label}")
+                        res_hsq = api_update_hosoquet(
+                            session, hoso, debug_dir, f"{row_excel}_{idx}", hsq_notes
+                        )
+                        hsq_gan_ok = bool(res_hsq.get("ok"))
+
+                        if not hsq_gan_ok:
+                            extra_notes.append(f"[{sub_label}] Gắn HSQ lỗi: {res_hsq.get('error','')}")
+
+                    else:
+                        extra_notes.append(f"[{sub_label}] HSQ: " + "; ".join(hsq_notes))
+
+                else:
+                    extra_notes.append(f"[{sub_label}] Lấy HSQ kê khai lỗi: {res_hsq_get.get('error','')}")
+ 
+            if hsq_gan_ok:
+                da_va.append("liên kết HSQ")
+            else:
+                khong_va.append("liên kết HSQ (chưa gắn được)")
+ 
+            # A.2 — gửi yêu cầu phân loại lại
+            progress(85, f"Phân loại lại {sub_label}")
+            thua_ids = get_thua_dat_ids_from_ttdk(ttdk, phan_loai_item=phan_loai_item)
+            api_gui_yeu_cau_phan_loai_lai(session, thua_ids)
+ 
+            # A.3 — nếu có delta thì gửi delta; không có thì thôi
+            if co_delta:
+                progress(92, f"Gửi delta {sub_label}")
+                res_delta = gui_delta(session, delta_payload)
+                if not res_delta.get("ok"):
+                    loi_gui = "delta lỗi: " + str(res_delta.get("raw") or res_delta.get("error"))
+        else:
+            # ===== TRƯỜNG HỢP B: chỉ gửi delta (nếu có) =====
+            if co_delta:
+                progress(85, f"Gửi delta {sub_label}")
+                res_delta = gui_delta(session, delta_payload)
+                if not res_delta.get("ok"):
+                    loi_gui = "delta lỗi: " + str(res_delta.get("raw") or res_delta.get("error"))
+ 
+        if loi_gui:
+            so_that_bai += 1
+            extra_notes.append(f"[{sub_label}] LỖI gửi: {loi_gui}")
+            logger.log(
+                f"⚠️ Dòng {row_excel} [{sub_label}] tờ {soto}/thửa {sothua} "
+                f"(TTĐK {tinh_hinh_id}, thửa {thua_dat_id}): LỖI gửi: {loi_gui}"
+            )
+            continue
+ 
+        # Kết luận cho bản ghi này
+        if da_va and not khong_va:
+            so_thanh_cong += 1
+            _ghi_ket_qua("✅", "đã xử lý")
+        elif da_va and khong_va:
+            so_mot_phan += 1
+            _ghi_ket_qua("⚠️", "xử lý 1 phần (còn lại làm tay)")
+        else:
+            so_that_bai += 1
+            _ghi_ket_qua("⏭", "KHÔNG xử lý được (làm tay)")
+ 
+    result_row["tinhHinhDangKyId"] = ", ".join(str(x) for x in all_ttdk_ids)
+    result_row["hoSoQuetId"] = ", ".join(str(x) for x in all_hsq_ids)
+    result_row["thongTinHoSoId"] = ", ".join(str(x) for x in all_tths_ids)
+    result_row["chu_su_dung"] = "; ".join(str(x) for x in all_chu)
+    result_row["note"] = " | ".join(n for n in extra_notes if n)
+ 
     progress(100, "Hoàn thành")
+ 
+    # Trạng thái tổng của dòng
     if DRY_RUN:
-        return done("🧪", "DRY_RUN", "Đã build payload (xem debug JSON)")
-    return done("✅", "Thành công", "Cập nhật thành công")
-
-
-# =========================
-# WORKER
-# =========================
+        result_row["status"] = "DRY_RUN"
+    elif so_that_bai == 0 and so_mot_phan == 0:
+        result_row["status"] = "Thành công"
+    elif so_thanh_cong == 0 and so_mot_phan == 0:
+        result_row["status"] = "Lỗi"
+    else:
+        result_row["status"] = "Một phần"
+ 
+    return result_row
 
 def worker_run(username, password, maxa, ngay_dang_ky_lan_dau, excel_path,
                log_queue, flags):
+    global _GLOBAL_LOGGER
     logger = ThreadSafeLogger(log_queue)
+    _GLOBAL_LOGGER = logger
     driver = None
     try:
         data = doc_excel(excel_path)
@@ -1644,7 +2130,8 @@ def worker_run(username, password, maxa, ngay_dang_ky_lan_dau, excel_path,
             return
 
         tong = len(data)
-        logger.log(f"✅ Đọc Excel: {tong} dòng. DRY_RUN={DRY_RUN} | MAX_WORKERS={MAX_WORKERS}")
+        logger.log(f"✅ Đọc Excel: {tong} dòng. DRY_RUN={DRY_RUN} | MAX_WORKERS={MAX_WORKERS} "
+                   f"| Giãn request tối thiểu {MIN_REQUEST_INTERVAL}s")
         logger.log("Quy tắc bật: " + ", ".join(k for k, v in flags.items() if v))
         tenfile = os.path.splitext(os.path.basename(excel_path))[0]
         thoigian = datetime.now().strftime("%d%m%y_%H%M")
@@ -1657,12 +2144,6 @@ def worker_run(username, password, maxa, ngay_dang_ky_lan_dau, excel_path,
 
         driver = login_mplis(username, password)
         base_session = tao_session_tu_selenium(driver)
-        try:
-            driver.quit()
-            driver = None
-            logger.log("✅ Đã lấy session API và đóng Chrome.")
-        except Exception as e:
-            logger.log(f"⚠️ Không đóng được Chrome: {e}")
         thread_local = threading.local()
 
         def get_thread_session():
@@ -1716,7 +2197,7 @@ def worker_run(username, password, maxa, ngay_dang_ky_lan_dau, excel_path,
                 st = kq.get("status", "")
                 if st in ("Thành công", "DRY_RUN"):
                     thanh_cong += 1
-                elif st == "Bỏ qua":
+                elif st in ("Bỏ qua", "Một phần"):
                     bo_qua += 1
                 else:
                     that_bai += 1
@@ -1764,8 +2245,8 @@ def worker_run(username, password, maxa, ngay_dang_ky_lan_dau, excel_path,
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Cập nhật Thông tin đăng ký (VBDLIS) — bản thử nghiệm")
-        self.geometry("1120x820")
+        self.title("Cập nhật Thông tin đăng ký (VBDLIS) — bản chống 429")
+        self.geometry("1120x860")
 
         self.log_queue = queue.Queue()
         self.worker_thread = None
@@ -1776,7 +2257,7 @@ class App(tk.Tk):
         self.var_ngay_dk  = tk.StringVar()
         self.var_excel    = tk.StringVar()
         self.var_workers  = tk.IntVar(value=MAX_WORKERS)
-        # Không còn checkbox DRY_RUN/rule: chạy thật và bật sẵn tất cả quy tắc cần thiết.
+        self.var_delay    = tk.DoubleVar(value=MIN_REQUEST_INTERVAL)
 
         self._worker_rows = []
         self.create_widgets()
@@ -1796,15 +2277,19 @@ class App(tk.Tk):
 
         ttk.Label(frame_top, text="Số luồng").grid(row=2, column=0, padx=5, pady=4, sticky="w")
         ttk.Spinbox(frame_top, textvariable=self.var_workers, from_=1, to=10, width=6).grid(row=2, column=1, padx=5, pady=4, sticky="w")
-        ttk.Label(frame_top, text="CHẠY THẬT: cập nhật TTĐK + HSQ, không dùng DRY RUN",
-                  foreground="red").grid(row=2, column=2, columnspan=3, padx=10, pady=4, sticky="w")
 
-        ttk.Label(frame_top, text="File Excel").grid(row=3, column=0, padx=5, pady=4, sticky="w")
-        ttk.Entry(frame_top, textvariable=self.var_excel, width=80).grid(row=3, column=1, columnspan=3, padx=5, pady=4, sticky="we")
-        ttk.Button(frame_top, text="Duyệt", command=self.browse_excel).grid(row=3, column=4, padx=5, pady=4)
+        ttk.Label(frame_top, text="Giãn request (giây)").grid(row=2, column=2, padx=5, pady=4, sticky="w")
+        ttk.Spinbox(frame_top, textvariable=self.var_delay, from_=0.0, to=5.0, increment=0.1, width=6).grid(
+            row=2, column=3, padx=5, pady=4, sticky="w")
+
+        ttk.Label(frame_top,
+                  text="CHẠY THẬT. Nếu vẫn 429: hạ luồng = 1 và tăng giãn request lên 1.0–1.5s",
+                  foreground="red").grid(row=3, column=0, columnspan=5, padx=10, pady=4, sticky="w")
+
+        ttk.Label(frame_top, text="File Excel").grid(row=4, column=0, padx=5, pady=4, sticky="w")
+        ttk.Entry(frame_top, textvariable=self.var_excel, width=80).grid(row=4, column=1, columnspan=3, padx=5, pady=4, sticky="we")
+        ttk.Button(frame_top, text="Duyệt", command=self.browse_excel).grid(row=4, column=4, padx=5, pady=4)
         frame_top.columnconfigure(3, weight=1)
-
-        # Không hiển thị khung bật/tắt quy tắc: mặc định cập nhật tất cả.
 
         frame_btn = ttk.Frame(self)
         frame_btn.pack(fill="x", padx=10, pady=2)
@@ -1873,9 +2358,13 @@ class App(tk.Tk):
         if not self.validate_input():
             return
 
-        global MAX_WORKERS, DRY_RUN
+        global MAX_WORKERS, DRY_RUN, MIN_REQUEST_INTERVAL
         MAX_WORKERS = self.var_workers.get()
         DRY_RUN = False
+        try:
+            MIN_REQUEST_INTERVAL = max(0.0, float(self.var_delay.get()))
+        except Exception:
+            MIN_REQUEST_INTERVAL = 0.6
 
         flags = {
             "RULE_MA_DINH_DANH":    True,

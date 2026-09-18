@@ -1,0 +1,12 @@
+.venv/
+.venv-build/
+build/
+dist/
+build_fixed*/
+dist_fixed*/
+models/
+config.json
+*.log
+__pycache__/
+.pytest_cache/
+*.pyc
