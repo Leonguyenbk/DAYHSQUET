@@ -1,0 +1,7 @@
+requests
+openpyxl
+selenium
+webdriver-manager
+customtkinter
+flet
+flet-desktop

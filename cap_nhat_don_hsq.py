@@ -32,6 +32,7 @@ import os
 import re
 import threading
 import time
+import unicodedata
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -225,6 +226,63 @@ def ddmmyyyy_to_iso_utc_start_of_day_vn(date_str: str) -> str:
     return dt_utc.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
+def remove_accents(input_str: str) -> str:
+    """Loại bỏ dấu tiếng Việt để so khớp mềm."""
+    if not input_str:
+        return ""
+    nfkd_form = unicodedata.normalize("NFKD", input_str)
+    return "".join([c for c in nfkd_form if not unicodedata.combining(c)])
+
+
+def tach_thong_tin_tu_chuoi_madon(val: Any) -> tuple[str, str]:
+    """
+    Tự động bóc tách mã đơn (tinhHinhDangKyId) và thông tin GCN (nếu có)
+    từ chuỗi mô tả/thông báo kiểm tra hoặc lỗi.
+    Ví dụ:
+    "Tình hình đăng ký 13456477 có giấy chứng nhận 2502899_11 có hồ sơ quét không có dữ liệu tập tin; Chưa đồng bộ thông tin ba khối (không có hồ sơ quét)"
+    -> id_don = "13456477", gcn_hint = "2502899_11"
+    """
+    if val is None:
+        return "", ""
+    s = str(val).strip()
+    if not s:
+        return "", ""
+
+    # 1. Trường hợp là số nguyên hoặc float thuần túy (e.g. 13456477 hoặc 13456477.0)
+    if re.fullmatch(r"\d+(\.0+)?", s):
+        return str(int(float(s))), ""
+
+    id_don = ""
+    gcn_hint = ""
+
+    s_clean = remove_accents(s).lower()
+
+    # Pattern 1: Tình hình đăng ký <mã> / Đơn đăng ký <mã> / Mã đơn <mã> / THDK <mã>
+    m_id = re.search(
+        r"(?:tinh\s*hinh\s*dang\s*ky|don\s*dang\s*ky|ma\s*don|id\s*don|thdk|tinhhinhdangky)\D*?(\d{5,10})",
+        s_clean,
+    )
+    if m_id:
+        id_don = m_id.group(1)
+    else:
+        # Pattern 2: Tìm chữ số sau 'id' hoặc 'don'
+        m_id2 = re.search(r"\b(?:id|don)\D*?(\d{5,10})\b", s_clean)
+        if m_id2:
+            id_don = m_id2.group(1)
+        else:
+            # Pattern 3: Tìm dãy số 6-10 chữ số đầu tiên trong chuỗi
+            m_digits = re.search(r"\b\d{6,10}\b", s)
+            if m_digits:
+                id_don = m_digits.group(0)
+
+    # 2. Tách thông tin GCN nếu có trong chuỗi (ví dụ: 'giấy chứng nhận 2502899_11')
+    m_gcn = re.search(r"gi[aấ]y\s*ch[uứ]ng\s*nh[aậ]n\s*([A-Za-z0-9_\-]+)", s, re.IGNORECASE)
+    if m_gcn:
+        gcn_hint = m_gcn.group(1).strip()
+
+    return id_don, gcn_hint
+
+
 def normalize_code(s: Any) -> str:
     """Bỏ toàn bộ khoảng trắng, gạch nối, gạch dưới, dấu chấm và chuyển hoa để so sánh mã."""
     if not s:
@@ -388,7 +446,7 @@ def doc_danh_sach(file_path: str) -> list[dict[str, Any]]:
                 "HOẶC cặp cột ('soto', 'sothua')."
             )
 
-        if not has_file:
+        if not has_file and not has_id_don:
             raise ValueError(
                 "File Excel cần có ít nhất một trong các cột tên file hoặc số GCN ('tenfile', 'sogcn')."
             )
@@ -408,7 +466,10 @@ def doc_danh_sach(file_path: str) -> list[dict[str, Any]]:
             if not any([id_don_val, so_to_val, so_thua_val, loai_dat_val, ten_file_val, so_gcn_val, so_vao_so_val, gcn_id_val]):
                 continue
 
-            id_don_str    = chuan_hoa_gia_tri_excel(id_don_val)
+            raw_id_don_str = chuan_hoa_gia_tri_excel(id_don_val)
+            extracted_id, extracted_gcn = tach_thong_tin_tu_chuoi_madon(id_don_val)
+            id_don_str    = extracted_id if extracted_id else raw_id_don_str
+
             so_to_str     = chuan_hoa_gia_tri_excel(so_to_val)
             so_thua_str   = chuan_hoa_gia_tri_excel(so_thua_val)
             loai_dat_str  = chuan_hoa_gia_tri_excel(loai_dat_val)
@@ -416,6 +477,10 @@ def doc_danh_sach(file_path: str) -> list[dict[str, Any]]:
             so_gcn_str    = chuan_hoa_gia_tri_excel(so_gcn_val)
             so_vao_so_str = chuan_hoa_gia_tri_excel(so_vao_so_val)
             gcn_id_str    = chuan_hoa_gia_tri_excel(gcn_id_val)
+
+            # Nếu trong chuỗi mã đơn có số GCN và cột GCN chưa có, tự điền
+            if not so_gcn_str and extracted_gcn:
+                so_gcn_str = extracted_gcn
 
             # Nếu tenfile rỗng nhưng có sogcn, gán tenfile mặc định = sogcn.pdf
             if not ten_file_str and so_gcn_str:
@@ -1995,14 +2060,22 @@ class App:
             try:
                 tinh_hinh_id_int = int(id_don)
             except (TypeError, ValueError):
-                return [
-                    {
-                        "soto": so_to, "sothua": so_thua, "loaidat": loai_dat,
-                        "tenfile": ten_file, "sogcn": so_gcn,
-                        "tinhhinhdangkyid": id_don,
-                        "trang_thai": "Lỗi", "ghi_chu": f"ID đơn '{id_don}' không phải số nguyên hợp lệ.",
-                    }
-                ]
+                ext_id, ext_gcn = tach_thong_tin_tu_chuoi_madon(id_don)
+                if ext_id:
+                    tinh_hinh_id_int = int(ext_id)
+                    if not so_gcn and ext_gcn:
+                        so_gcn = ext_gcn
+                    if not ten_file and so_gcn:
+                        ten_file = f"{so_gcn}.pdf"
+                else:
+                    return [
+                        {
+                            "soto": so_to, "sothua": so_thua, "loaidat": loai_dat,
+                            "tenfile": ten_file, "sogcn": so_gcn,
+                            "tinhhinhdangkyid": id_don,
+                            "trang_thai": "Lỗi", "ghi_chu": f"ID đơn '{id_don}' không phải số nguyên hợp lệ.",
+                        }
+                    ]
 
             self.log(f"   → Xử lý trực tiếp theo ID đơn {tinh_hinh_id_int}")
             row_result = xu_ly_mot_don(
