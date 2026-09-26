@@ -107,6 +107,69 @@ def _gcn_lookup_key(value: str) -> str:
     return "".join(re.findall(r"[A-Z0-9]+", core.remove_accents(stem).upper()))
 
 
+def _split_excel_values(value: Any) -> list[str]:
+    """Tách danh sách trong một ô Excel theo dấu chấm phẩy hoặc xuống dòng."""
+    return [part.strip() for part in re.split(r"[;\r\n]+", str(value or "")) if part.strip()]
+
+
+def expand_rows_by_sogcn(
+    rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    """Mở rộng một dòng có nhiều ``sogcn`` thành một lượt xử lý cho mỗi GCN.
+
+    Mã đơn, tờ/thửa và các thông tin dùng chung được giữ nguyên. Các trường nhận
+    diện GCN phụ chỉ được ghép theo vị trí khi chúng cũng có đúng số phần tử;
+    cách này tránh vô tình dùng một ``gcn_id`` cho nhiều giấy chứng nhận.
+    """
+    expanded_rows: list[dict[str, Any]] = []
+    split_source_rows = 0
+
+    for row in rows:
+        raw_sogcn = str(row.get("sogcn") or "").strip()
+        gcn_parts = _split_excel_values(raw_sogcn)
+
+        # Loại GCN trùng trong cùng một ô nhưng vẫn giữ nguyên thứ tự nhập.
+        unique_gcns: list[str] = []
+        seen_keys: set[str] = set()
+        for gcn in gcn_parts:
+            key = _gcn_lookup_key(gcn) or gcn.upper()
+            if key not in seen_keys:
+                seen_keys.add(key)
+                unique_gcns.append(gcn)
+
+        if len(unique_gcns) <= 1:
+            expanded_rows.append(row)
+            continue
+
+        split_source_rows += 1
+        item_count = len(unique_gcns)
+        raw_tenfile = str(row.get("tenfile") or "").strip()
+        tenfile_was_auto_filled = raw_tenfile.casefold() == f"{raw_sogcn}.pdf".casefold()
+        tenfile_parts = [] if tenfile_was_auto_filled else _split_excel_values(raw_tenfile)
+        sovaoso_parts = _split_excel_values(row.get("sovaoso"))
+        gcn_id_parts = _split_excel_values(row.get("gcn_id"))
+
+        for index, so_gcn in enumerate(unique_gcns):
+            expanded = dict(row)
+            expanded["sogcn"] = so_gcn
+            expanded["tenfile"] = (
+                tenfile_parts[index]
+                if len(tenfile_parts) == item_count
+                else f"{so_gcn}.pdf"
+            )
+            expanded["sovaoso"] = (
+                sovaoso_parts[index] if len(sovaoso_parts) == item_count else ""
+            )
+            expanded["gcn_id"] = (
+                gcn_id_parts[index] if len(gcn_id_parts) == item_count else ""
+            )
+            expanded["_split_gcn_index"] = index + 1
+            expanded["_split_gcn_total"] = item_count
+            expanded_rows.append(expanded)
+
+    return expanded_rows, split_source_rows
+
+
 def resolve_pdfs_by_gcn(
     folder_upload: str, so_gcns: list[str]
 ) -> dict[str, tuple[str | None, str]]:
@@ -775,6 +838,12 @@ class CapNhatDonHsqFletApp:
                         selectable=True,
                     ),
                     ft.Text(
+                        "• Một đơn có nhiều GCN: nhập 'BQ 809137;BQ 809138;BQ 809132' trong cùng ô sogcn; công cụ tự tách và xử lý từng GCN.",
+                        color=CyberTheme.TEXT_LIGHT,
+                        size=10,
+                        selectable=True,
+                    ),
+                    ft.Text(
                         "• Hệ thống tự tìm file PDF chứa số GCN này trong thư mục và cập nhật mô tả: Giấy chứng nhận DN 512781.",
                         color=CyberTheme.GREEN,
                         size=10,
@@ -985,7 +1054,7 @@ class CapNhatDonHsqFletApp:
                 self._guide_step(
                     "2",
                     "Chuẩn bị Excel",
-                    "Dùng cột madon/tinhhinhdangkyid hoặc cặp soto+sothua. Với file 24337-GCN-DN 512781 - 2509263_.pdf, nhập sogcn là DN 512781.",
+                    "Dùng cột madon/tinhhinhdangkyid hoặc cặp soto+sothua. Với file 24337-GCN-DN 512781 - 2509263_.pdf, nhập sogcn là DN 512781. Nhiều GCN cùng đơn có thể đặt chung một ô và ngăn cách bằng dấu ';'.",
                 ),
                 self._guide_step("3", "Chọn PDF và tùy chọn", "Bật upload để thay file thật; tắt upload nếu chỉ sửa metadata của file HSQ đã có."),
                 self._guide_step(
@@ -1302,6 +1371,15 @@ class CapNhatDonHsqFletApp:
             self._show_toast(f"Lỗi đọc Excel: {exc}", error=True)
             return
 
+        source_row_count = len(rows)
+        rows, split_source_rows = expand_rows_by_sogcn(rows)
+        if split_source_rows:
+            self._append_log(
+                f"Đã tách {split_source_rows} dòng có nhiều GCN: "
+                f"{source_row_count} dòng Excel → {len(rows)} lượt xử lý GCN.",
+                "title",
+            )
+
         if day_hsq:
             unique_gcns: dict[str, str] = {}
             for item in rows:
@@ -1390,13 +1468,18 @@ class CapNhatDonHsqFletApp:
             "ngay_dk": ngay_dk,
             "thay_moi_gcn": thay_moi_gcn,
             "dry_run": dry_run,
+            "source_row_count": source_row_count,
+            "split_source_rows": split_source_rows,
             "preflight_skipped": len(resolution_errors) if day_hsq else 0,
         }
 
         mode = "ID đơn" if is_mode_id else "Tờ / Thửa"
+        row_summary = f"{source_row_count} dòng Excel"
+        if split_source_rows:
+            row_summary += f" → {len(rows)} lượt GCN"
         confirm_text = (
             f"Chế độ: {mode}\n"
-            f"{len(rows)} dòng Excel → {len(groups)} nhóm xử lý\n"
+            f"{row_summary} → {len(groups)} nhóm xử lý\n"
             f"Upload PDF: {'Có' if day_hsq else 'Không, chỉ sửa metadata'}\n"
             f"Thay theo GCN: {'Có' if thay_moi_gcn else 'Chỉ CHUACOGIAY'}\n"
             f"Loại HSQ: {loai_hsq} - {core.LOAI_HO_SO_QUET_OPTIONS.get(loai_hsq, '')}\n"
@@ -1503,7 +1586,11 @@ class CapNhatDonHsqFletApp:
 
         try:
             self._thread_log("=" * 60)
-            self._thread_log(f"BẮT ĐẦU: {len(cfg['rows'])} dòng, {len(groups)} nhóm duy nhất.")
+            source_row_count = cfg.get("source_row_count", len(cfg["rows"]))
+            self._thread_log(
+                f"BẮT ĐẦU: {source_row_count} dòng Excel, "
+                f"{len(cfg['rows'])} lượt GCN, {len(groups)} nhóm duy nhất."
+            )
             self._thread_log(
                 f"Đẩy HSQ: {cfg['day_hsq']} | Thay mới theo GCN: {cfg['thay_moi_gcn']} | DRY_RUN: {core.DRY_RUN}"
             )
@@ -1514,10 +1601,13 @@ class CapNhatDonHsqFletApp:
                     break
 
                 representative = items[0]
+                gcn_label = str(representative.get("sogcn") or "").strip()
                 if representative.get("id_don"):
                     label = f"ID đơn {representative['id_don']}"
                 else:
                     label = f"tờ {representative.get('soto') or '?'} / thửa {representative.get('sothua') or '?'}"
+                if gcn_label:
+                    label += f" / GCN {gcn_label}"
                 self._emit("group_start", group_index, len(groups), label)
                 self._thread_log(
                     f"--- [{group_index}/{len(groups)}] Dòng Excel {representative['excel_row']}: {label} ---"
