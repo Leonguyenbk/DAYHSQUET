@@ -6,3 +6,9 @@ __pycache__/
 *.log
 .env
 .claude/
+
+# Dữ liệu hồ sơ tải về từ MPLIS (thông tin cá nhân) — không đưa lên git
+hsq_tai_ve/
+hsq_bo_sung_gcn/
+hsq_url_mau.json
+build/TaiDayHSQ/
