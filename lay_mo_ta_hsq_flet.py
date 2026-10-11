@@ -40,7 +40,10 @@ class LayMoTaHsqApp(TaiHsqApp):
             ft.Container(height=6),
             ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, controls=[
                 ft.Text("Lấy mô tả HSQ", color=CyberTheme.TEXT_WHITE, size=13, weight=ft.FontWeight.BOLD),
-                self._button("Nạp Excel", ft.Icons.UPLOAD_FILE_ROUNDED, CyberTheme.PURPLE, self._nap_excel_ids),
+                ft.Row(spacing=8, controls=[
+                    self._button("Xóa hết", ft.Icons.DELETE_SWEEP_ROUNDED, CyberTheme.RED, self._xoa_het_ids),
+                    self._button("Nạp Excel", ft.Icons.UPLOAD_FILE_ROUNDED, CyberTheme.PURPLE, self._nap_excel_ids),
+                ]),
             ]),
             self.ids,
             ft.Row(spacing=4, controls=[
@@ -69,6 +72,12 @@ class LayMoTaHsqApp(TaiHsqApp):
         self.btn_lay.opacity = 0.4 if running else 1
         self.btn_stop.disabled = not running
         self.btn_stop.opacity = 1 if running else 0.4
+
+    def _xoa_het_ids(self, _=None) -> None:
+        so_id = len(thd.tach_danh_sach_id(self.ids.value or ""))
+        self.ids.value = ""
+        self.ids.update()
+        self._append_log(f"Đã xóa {so_id} ID khỏi danh sách.", "title")
 
     def _mo_excel(self, _=None) -> None:
         if not self.excel_kq or not os.path.isfile(self.excel_kq):

@@ -6,7 +6,7 @@ Với mỗi tinhHinhDangKyId: gọi GetThongTinDangKyByTinhHinhDangKyIds (getHoS
 duyệt ListHoSoQuet / ListFileHoSoQuet, ghi mỗi file 1 dòng. Không tải file.
 
 Excel kết quả có 2 sheet:
-  - ChiTiet : mỗi file HSQ 1 dòng (madon, tờ, thửa, xã, hosoquetid, vị trí, mô tả, loại...)
+  - ChiTiet : mỗi file HSQ 1 dòng (madon, tờ, thửa, xã, GCN của đơn, hosoquetid, vị trí, mô tả, loại...)
   - TongHop : các mô tả khác nhau, số lần xuất hiện, số đơn, danh sách mã đơn
 
 Cách dùng:
@@ -20,6 +20,7 @@ Chạy không tham số (python lay_mo_ta_hsq.py) → mở giao diện lay_mo_ta
 
 import argparse
 import getpass
+from datetime import datetime, timedelta, timezone
 import os
 import re
 import sys
@@ -32,16 +33,51 @@ import tai_hsq_don as tai
 
 log = tai.log
 
-HEADERS = ["stt", "madon", "soto", "sothua", "xaid", "hosoquetid", "vitri", "mota",
+HEADERS = ["stt", "madon", "soto", "sothua", "xaid",
+           "gcn_sophathanh", "gcn_sovaoso", "gcn_mavach", "gcn_ngayvaoso", "hosoquetid", "vitri", "mota",
            "loaihosoquet", "giaychungnhanid", "dakyso", "nodeid", "ghichu"]
-WIDTHS = {"stt": 6, "madon": 12, "soto": 7, "sothua": 7, "xaid": 8, "hosoquetid": 11, "vitri": 6,
+WIDTHS = {"stt": 6, "madon": 12, "soto": 7, "sothua": 7, "xaid": 8,
+          "gcn_sophathanh": 20, "gcn_sovaoso": 16, "gcn_mavach": 18, "gcn_ngayvaoso": 14, "hosoquetid": 11, "vitri": 6,
           "mota": 55, "loaihosoquet": 22, "giaychungnhanid": 13, "dakyso": 8, "nodeid": 38, "ghichu": 40}
+
+
+def ngay_mplis(value: Any) -> str:
+    """/Date(1543942800000)/ hoặc ISO → DD/MM/YYYY (giờ Việt Nam)."""
+    s = str(value or "").strip()
+    m = re.fullmatch(r"/Date\((-?\d+)(?:[+-]\d{4})?\)/", s)
+    try:
+        if m:
+            dt = datetime.fromtimestamp(int(m.group(1)) / 1000, tz=timezone.utc)
+        else:
+            dt = datetime.fromisoformat(s[:-1] + "+00:00" if s.endswith("Z") else s)
+    except ValueError:
+        return s
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone(timedelta(hours=7)))
+    return dt.strftime("%d/%m/%Y")
+
+
+def thong_tin_gcn(detail: dict[str, Any]) -> dict[str, str]:
+    """GCN hiện hành của đơn (bỏ isLastest = False); nhiều GCN thì nối bằng '; '."""
+    ds = [g for g in detail.get("ListGiayChungNhan") or []
+          if isinstance(g, dict) and g.get("isLastest") is not False]
+
+    def noi(lay) -> str:
+        return "; ".join(str(lay(g) or "").strip() for g in ds) if ds else ""
+
+    return {
+        "gcn_sophathanh": noi(lambda g: g.get("soPhatHanh")),
+        "gcn_sovaoso": noi(lambda g: g.get("soVaoSo")),
+        "gcn_mavach": noi(lambda g: g.get("maVach")),
+        "gcn_ngayvaoso": noi(lambda g: ngay_mplis(g.get("ngayVaoSo"))),
+    }
 
 
 def dong_tu_don(id_don: int, detail: dict[str, Any]) -> list[dict[str, Any]]:
     thdk = detail.get("TinhHinhDangKy") or {}
     chung = {"madon": id_don, "soto": thdk.get("soHieuToBanDo", ""),
-             "sothua": thdk.get("soThuTuThua", ""), "xaid": thdk.get("xaId", "")}
+             "sothua": thdk.get("soThuTuThua", ""), "xaid": thdk.get("xaId", ""),
+             **thong_tin_gcn(detail)}
     files = tai.liet_ke_file_hsq(detail)
     if not files:
         return [{**chung, "ghichu": "Không có HSQ"}]
