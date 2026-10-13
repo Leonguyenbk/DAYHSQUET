@@ -137,12 +137,14 @@ def khop_file(path: str, ds_tp: list[dict[str, Any]]) -> tuple[dict | None, str,
     file có hậu tố "-GCN [số]" → phần tử thứ 3 là số GCN ghi trong tên ('' nếu không ghi).
     """
     stt, ten = tach_ten_file(path)
-    tp, ly_do = _khop_ten(stt, ten, os.path.splitext(os.path.basename(path))[0], ds_tp)
     hau_to = tach_hau_to_gcn(ten)
-    if tp is not None or hau_to is None:
-        return tp, ly_do, None
-    tp, ly_do = _khop_ten(stt, hau_to[0], hau_to[0], ds_tp)
-    return tp, ly_do, (hau_to[1] if tp is not None else None)
+    if hau_to is not None:
+        # Bỏ hậu tố "-GCN [số]" trước: khớp kiểu "tên chứa mô tả" với tên đầy đủ sẽ làm mất đánh dấu GCN.
+        tp, ly_do = _khop_ten(stt, hau_to[0], hau_to[0], ds_tp)
+        if tp is not None:
+            return tp, "", hau_to[1]
+    tp, ly_do = _khop_ten(stt, ten, os.path.splitext(os.path.basename(path))[0], ds_tp)
+    return tp, ly_do, None
 
 
 def _khop_ten(stt: int, ten: str, ten_day_du: str, ds_tp: list[dict[str, Any]]) -> tuple[dict | None, str]:
@@ -159,7 +161,28 @@ def _khop_ten(stt: int, ten: str, ten_day_du: str, ds_tp: list[dict[str, Any]]) 
                 return theo_stt[0], ""
             return None, (f"Mô tả '{ten}' trùng {len(ung_vien)} thành phần trong đơn — đặt tên file có tiền tố "
                           f"số thứ tự (vd {ung_vien[0]['stt']:02d}_{ten}.pdf) để chỉ rõ thành phần")
+    # Tên file có thêm chữ trước/sau mô tả (vd 'Ly Kim Hoang 24221_3_96_GCN_DI 923410') → mô tả dài nhất nằm trong tên.
+    khoa = chuan_hoa(ten)
+    ung_vien = [tp for tp in ds_tp if mo_ta_nam_trong(khoa, tp["khoa"])]
+    if ung_vien:
+        dai_nhat = max(len(tp["khoa"]) for tp in ung_vien)
+        ung_vien = [tp for tp in ung_vien if len(tp["khoa"]) == dai_nhat]
+        if len(ung_vien) == 1:
+            return ung_vien[0], ""
+        theo_stt = [tp for tp in ung_vien if stt and tp["stt"] == stt]
+        if len(theo_stt) == 1:
+            return theo_stt[0], ""
+        return None, (f"Tên file '{ten}' chứa mô tả '{ung_vien[0]['node'].get('moTa')}' của {len(ung_vien)} thành "
+                      f"phần — đặt tên file có tiền tố số thứ tự để chỉ rõ thành phần")
     return None, f"Không có thành phần nào mô tả '{ten}'"
+
+
+MO_TA_TOI_THIEU = 8  # mô tả ngắn hơn (GT, PC, GCN...) phải khớp nguyên tên file, không khớp kiểu "nằm trong"
+
+
+def mo_ta_nam_trong(khoa_file: str, khoa_mo_ta: str) -> bool:
+    """Tên file (đã chuẩn hoá) chứa nguyên mô tả (đã chuẩn hoá) đủ dài."""
+    return len(khoa_mo_ta) >= MO_TA_TOI_THIEU and khoa_mo_ta in khoa_file
 
 
 # ============================ BỔ SUNG LOẠI HSQ ============================

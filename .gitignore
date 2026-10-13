@@ -12,3 +12,6 @@ hsq_tai_ve/
 hsq_bo_sung_gcn/
 hsq_url_mau.json
 build/TaiDayHSQ/
+
+# Flet client đóng gói lúc build (flet_client_bundle.py tự tạo lại)
+build/flet_client/

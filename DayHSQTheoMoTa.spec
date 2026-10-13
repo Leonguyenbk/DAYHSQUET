@@ -1,7 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
-datas = collect_data_files("flet")
+import sys
+sys.path.insert(0, SPECPATH)
+from flet_client_bundle import datas_flet_client
+
+datas = collect_data_files("flet") + datas_flet_client()  # client đi kèm: máy khác không phải tải từ GitHub
 
 hiddenimports = ['selenium.webdriver.chrome.webdriver', 'selenium.webdriver.chrome.options', 'selenium.webdriver.chrome.service', 'selenium.webdriver.chromium.webdriver', 'selenium.webdriver.chromium.options', 'selenium.webdriver.chromium.service', 'selenium.webdriver.remote.webdriver', 'selenium.webdriver.common.keys', 'selenium.webdriver.common.by', 'selenium.webdriver.support.ui', 'selenium.webdriver.support.expected_conditions']
 hiddenimports += collect_submodules("openpyxl")

@@ -18,7 +18,8 @@ Với mỗi đơn:
      đã ký số nếu chỉ 1 file ký, còn lại bỏ qua GCN đó. 1 file chứa nhiều số GCN → dùng chung cho các GCN.
   3. Đặt file vào HSQ (luôn ghi nhận loại Giấy chứng nhận + gắn đúng GCN):
        a. thành phần đã gắn GCN đó          → thay file;
-       b. thành phần có mô tả trùng tên file → thay file + ghi nhận GCN;
+       b. thành phần có mô tả trùng tên file (hoặc tên file chứa nguyên mô tả ≥ 8 ký tự,
+          vd 'Ly Kim Hoang 24221_3_96_GCN_DI 923410') → thay file + ghi nhận GCN;
        c. không có                           → thêm thành phần mới "Giấy chứng nhận <số>" vào HSQ đầu tiên;
        d. đơn chưa có HSQ                    → tạo HSQ mới gồm các thành phần GCN.
      Mỗi HSQ gửi 1 request kèm ĐỦ thành phần cũ (giữ nguyên), như day_hsq_ky_so / bo_sung_gcn_hsq.
@@ -109,7 +110,8 @@ def lap_ke_hoach(detail: dict[str, Any], ds_gcn: list[dict], file_gcn: dict[int,
         khoa_file = dm.chuan_hoa(dm.tach_ten_file(path)[1])
         tim = None
         for cach, dk in (("a", lambda n: core.safe_int(n.get("giayChungNhanId")) == gid),
-                         ("b", lambda n: dm.chuan_hoa(n.get("moTa")) == khoa_file)):
+                         ("b", lambda n: dm.chuan_hoa(n.get("moTa")) == khoa_file),
+                         ("b", lambda n: dm.mo_ta_nam_trong(khoa_file, dm.chuan_hoa(n.get("moTa"))))):
             for h_i, h in enumerate(hsq_list):
                 for i, n in enumerate(day.cac_node(h)):
                     if (h_i, i) not in da_dung and dk(n):
