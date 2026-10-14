@@ -1,21 +1,21 @@
 # -*- coding: utf-8 -*-
 """
-Đẩy HSQ theo mô tả, mỗi đơn 1 thư mục — file đuôi "-GCN" gán cho MỌI GCN hiện hành của đơn.
+Đẩy HSQ theo mô tả, mỗi đơn 1 thư mục — file đuôi "-GCN" gán cho GCN có số nằm trong tên file.
 
 Cấu trúc thư mục:
     <thư mục gốc>/
         13456477/                          ← tên thư mục bắt đầu bằng mã đơn (tinhHinhDangKyId)
             Đơn đăng ký.pdf                ← tên file = mô tả (moTa) thành phần HSQ → thay file thành phần đó
             03_Trích lục thửa đất.pdf      ← file tải bằng TaiDayHSQ ("NN_<mô tả>") cũng được
-            PC_NGUYEN VAN A-GCN.pdf        ← đuôi "-GCN": file Giấy chứng nhận, gán cho mọi GCN của đơn
+            PC_A_DH 770214_DH 770215-GCN.pdf ← đuôi "-GCN": gán cho GCN có số nằm trong tên (ở đây 2 GCN)
             Ban sao-GCN DH 770214.pdf      ← "-GCN <số phát hành>": chỉ gán cho GCN đó
 
 Với mỗi đơn:
   1. Lấy chi tiết đơn → thành phần HSQ + GCN hiện hành (bỏ isLastest = False).
   2. File thường: khớp mô tả như day_hsq_theo_mota (bỏ dấu / ký tự đặc biệt / đuôi ký số, tiền tố "NN_",
      tên file chứa nguyên mô tả ≥ 8 ký tự) → thay file, giữ nguyên loại HSQ / GCN.
-  3. File "-GCN": mỗi GCN hiện hành nhận file này (file "-GCN <số>" chỉ cho GCN đó; còn lại dùng file
-     "-GCN" không ghi số — phải đúng 1 file, nhiều file thì lấy file đã ký số nếu chỉ 1 file ký):
+  3. File "-GCN": chỉ gán cho GCN hiện hành có SỐ PHÁT HÀNH nằm trong tên file (tên không có số GCN nào
+     của đơn → không đẩy; cùng 1 GCN nhiều file → lấy file đã ký số nếu chỉ 1 file ký):
        a. thành phần đã gắn GCN đó                         → thay file (ghi nhận lại loại GCN);
        b. thành phần có mô tả trùng tên file (bỏ "-GCN")   → thay file + ghi nhận Giấy chứng nhận + gắn GCN;
        c. không có                                          → thêm thành phần "Giấy chứng nhận <số>" vào HSQ
@@ -79,45 +79,42 @@ def _mot_file(files: list[str]) -> tuple[str | None, str]:
 def chia_file_gcn(ds_gcn: list[dict], file_gcn: list[tuple[str, str, str, int]],
                   ) -> tuple[dict[int, tuple[str, str, int]], list[tuple[str, str]]]:
     """
-    {gcnId: (file, tên bỏ hậu tố, stt)} — file "-GCN <số>" cho đúng GCN đó, file "-GCN" không số cho các GCN
-    còn lại. Trả thêm [(file, lý do bỏ qua)].
+    {gcnId: (file, tên bỏ hậu tố, stt)} — file "-GCN" chỉ gán cho GCN có SỐ PHÁT HÀNH nằm trong tên file
+    (vd 'PC_A_DH 770214-GCN', 'X-GCN DH 770214'); tên chứa nhiều số → gán cho từng GCN đó. Tên file không
+    có số GCN hiện hành nào → không đẩy. Trả thêm [(file, lý do bỏ qua)].
     """
     bo_qua: list[tuple[str, str]] = []
-    theo_so: dict[int, list[tuple[str, str, int]]] = {}
-    khong_so: list[tuple[str, str, int]] = []
     ten_ds = "; ".join(str(g.get("soPhatHanh") or g.get("giayChungNhanId")) for g in ds_gcn)
+    so_gcn = {core.safe_int(g.get("giayChungNhanId")): dm.chuan_hoa(g.get("soPhatHanh")) for g in ds_gcn}
+    theo_gcn: dict[int, list[tuple[str, str, int]]] = {}
     for p, ten, so, stt in file_gcn:
-        if not so:
-            khong_so.append((p, ten, stt))
-            continue
-        khop = [g for g in ds_gcn if dm.chuan_hoa(g.get("soPhatHanh")) == dm.chuan_hoa(so)]
-        if len(khop) == 1:
-            theo_so.setdefault(core.safe_int(khop[0].get("giayChungNhanId")), []).append((p, ten, stt))
+        if so:  # "-GCN <số>": số ghi sau hậu tố phải đúng 1 GCN hiện hành
+            khop = [gid for gid, s_ in so_gcn.items() if s_ == dm.chuan_hoa(so)]
+            ly_do = f"Tên file ghi GCN '{so}' nhưng GCN hiện hành của đơn là: {ten_ds}"
         else:
-            bo_qua.append((p, f"Tên file ghi GCN '{so}' nhưng GCN hiện hành của đơn là: {ten_ds}"))
+            khoa = dm.chuan_hoa(ten)
+            khop = [gid for gid, s_ in so_gcn.items() if len(s_) >= 5 and s_ in khoa]
+            ly_do = (f"Tên file không chứa số GCN hiện hành nào của đơn ({ten_ds}) — đổi tên có số GCN, "
+                     f"vd '{ten} {ds_gcn[0].get('soPhatHanh')}-GCN.pdf'")
+        if not khop:
+            bo_qua.append((p, ly_do))
+        for gid in khop:
+            theo_gcn.setdefault(gid, []).append((p, ten, stt))
 
     kq: dict[int, tuple[str, str, int]] = {}
-    for gid, ds in theo_so.items():
+    for gid, ds in theo_gcn.items():
         p, ly_do = _mot_file([x[0] for x in ds])
         if p is None:
-            bo_qua += [(x[0], ly_do) for x in ds]
+            bo_qua += [(x[0], f"GCN {ds_gcn_so(ds_gcn, gid)}: {ly_do}") for x in ds]
         else:
             kq[gid] = next(x for x in ds if x[0] == p)
-            bo_qua += [(x[0], f"Đã dùng {os.path.basename(p)} cho GCN này") for x in ds if x[0] != p]
-
-    con_lai = [g for g in ds_gcn if core.safe_int(g.get("giayChungNhanId")) not in kq]
-    if khong_so:
-        p, ly_do = _mot_file([x[0] for x in khong_so])
-        if p is None:
-            bo_qua += [(x[0], f"File -GCN không ghi số: {ly_do}") for x in khong_so]
-        else:
-            chon = next(x for x in khong_so if x[0] == p)
-            bo_qua += [(x[0], f"Đã dùng file -GCN {os.path.basename(p)}") for x in khong_so if x[0] != p]
-            if not con_lai:
-                bo_qua.append((p, "Mọi GCN đã có file '-GCN <số>' riêng"))
-            for g in con_lai:
-                kq[core.safe_int(g.get("giayChungNhanId"))] = chon
+            bo_qua += [(x[0], f"Đã dùng {os.path.basename(p)} cho GCN {ds_gcn_so(ds_gcn, gid)}")
+                       for x in ds if x[0] != p]
     return kq, bo_qua
+
+
+def ds_gcn_so(ds_gcn: list[dict], gid: int) -> str:
+    return next((str(g.get("soPhatHanh")) for g in ds_gcn if core.safe_int(g.get("giayChungNhanId")) == gid), "")
 
 
 # ============================ KẾ HOẠCH 1 ĐƠN ============================
@@ -144,7 +141,7 @@ def lap_ke_hoach(detail: dict[str, Any], pdfs: list[str]) -> tuple[list[dict], l
     viec: list[dict] = []
     bo_qua: list[tuple[str, dict | None, str]] = []
 
-    # ---- file "-GCN" → mọi GCN
+    # ---- file "-GCN" → GCN có số nằm trong tên file
     da_dung: set[int] = set()  # stt thành phần đã nhận file -GCN
     if file_gcn and not ds_gcn:
         bo_qua += [(x[0], None, "File -GCN nhưng đơn chưa có GCN hiện hành") for x in file_gcn]
@@ -154,7 +151,7 @@ def lap_ke_hoach(detail: dict[str, Any], pdfs: list[str]) -> tuple[list[dict], l
         for gcn in ds_gcn:
             gid = core.safe_int(gcn.get("giayChungNhanId"))
             if gid not in gan:
-                bo_qua.append(("", None, f"GCN {gcn.get('soPhatHanh')}: không có file -GCN"))
+                bo_qua.append(("", None, f"GCN {gcn.get('soPhatHanh')}: không có file -GCN nào có số GCN này trong tên"))
                 continue
             path, ten, stt = gan[gid]
             if not hsq_list:
@@ -290,7 +287,7 @@ def xu_ly_don(client: core.MplisClient, madon: int, pdfs: list[str], chay_thu: b
             continue
         if not _kiem_tra_loai_bat_buoc(h, ds):
             ly_do = ("HSQ chưa có thành phần loại Giấy chứng nhận/Đơn đăng ký/Thông báo xác nhận → MPLIS sẽ từ "
-                     "chối; thêm '-GCN' vào cuối tên file GCN rồi chạy lại")
+                     "chối; đặt tên file GCN '<tên> <số GCN>-GCN.pdf' rồi chạy lại")
             log(f"   ⚠ HSQ {h.get('hoSoQuetId')}: {ly_do}")
             rows += [_dong(madon, v=v, trang_thai="Bỏ qua", ghi_chu=ly_do) for v in ds]
             continue
@@ -327,6 +324,8 @@ def _gui_va_xac_nhan(client: core.MplisClient, madon: int, detail: dict[str, Any
             dg.gui_tao_moi(client, tths_id, [(dg.info_gcn_moi(v["gcn"], v["da_ky"]), v["path"]) for v in ds])
         else:
             bs.gui_hsq(client, hoso, items_hsq(hoso, ds))
+    except core.HetPhien:
+        raise
     except Exception as exc:
         log(f"   ❌ {core.rut_gon_text(exc, 300)}")
         return [_dong(madon, v=v, trang_thai="Lỗi", ghi_chu=core.rut_gon_text(exc, 300)) for v in ds]
@@ -450,6 +449,9 @@ def chay(
             except Exception as exc:
                 rows += [_dong(madon, p, trang_thai="Lỗi", ghi_chu=core.rut_gon_text(exc, 300)) for p in pdfs]
                 log(f"   ❌ {core.rut_gon_text(exc, 300)}")
+                if isinstance(exc, core.HetPhien):
+                    log(f"❌ {exc} — ĐÃ DỪNG: lấy lại session (hoặc dán token + cookie mới) rồi chạy lại.")
+                    break
             excel = _ghi_an_toan(excel, rows)
             time.sleep(core.REQUEST_DELAY_SECONDS)
     finally:

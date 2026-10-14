@@ -278,6 +278,10 @@ def chay(
             except Exception as exc:
                 kq = {"madon": madon, "trang_thai": "Lỗi", "ghi_chu": core.rut_gon_text(exc, 300)}
                 log(f"   ❌ {kq['ghi_chu']}")
+                if isinstance(exc, core.HetPhien):
+                    rows.append(kq)
+                    log(f"❌ {exc} — ĐÃ DỪNG: lấy lại session (hoặc dán token + cookie mới) rồi chạy lại.")
+                    break
             rows.append(kq)
             ghi_excel(excel, rows)
             time.sleep(core.REQUEST_DELAY_SECONDS)

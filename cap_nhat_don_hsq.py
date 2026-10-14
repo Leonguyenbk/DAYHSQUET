@@ -37,6 +37,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 from zipfile import BadZipFile
 
 import requests
@@ -605,6 +606,10 @@ class ExcelResultWriter:
 # ============================ CORE API ============================
 
 
+class HetPhien(RuntimeError):
+    """MPLIS chuyển hướng / trả HTML thay vì JSON → phiên đăng nhập hết hạn: dừng cả loạt, không thử lại."""
+
+
 class MplisClient:
     def __init__(self, log_fn):
         self.log = log_fn
@@ -724,7 +729,9 @@ class MplisClient:
             value = value.strip()
             if not name:
                 continue
-            session.cookies.set(name=name, value=value)
+            # Gắn domain + path: cookie không domain sẽ nằm song song với bản server gia hạn qua Set-Cookie
+            # (cùng tên, khác domain) → request gửi kèm cả cookie cũ, phiên "chết" giữa chừng.
+            session.cookies.set(name=name, value=value, domain=urlparse(BASE_URL).hostname, path="/")
             so_cookie_da_nhan += 1
 
         if so_cookie_da_nhan == 0:
@@ -749,8 +756,8 @@ class MplisClient:
 
     @staticmethod
     def _check_response(response: requests.Response, api_name: str) -> None:
-        if response.status_code in {301, 302, 303, 307, 308} or response.headers.get("Location"):
-            raise RuntimeError(
+        if response.status_code in {301, 302, 303, 307, 308, 401, 403} or response.headers.get("Location"):
+            raise HetPhien(
                 f"{api_name} bị chuyển hướng (HTTP {response.status_code}). "
                 "Phiên đăng nhập có thể đã hết hạn."
             )
@@ -766,6 +773,11 @@ class MplisClient:
         try:
             return response.json()
         except requests.JSONDecodeError as exc:
+            if response.text.lstrip().startswith("<"):
+                raise HetPhien(
+                    f"{api_name} trả về trang HTML thay vì JSON (HTTP {response.status_code}). "
+                    "Phiên đăng nhập có thể đã hết hạn."
+                ) from exc
             raise RuntimeError(
                 f"{api_name} không trả JSON (HTTP {response.status_code}): {response.text[:500]}"
             ) from exc

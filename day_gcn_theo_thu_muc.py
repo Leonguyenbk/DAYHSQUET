@@ -243,6 +243,8 @@ def xu_ly_don(client: core.MplisClient, madon: int, pdfs: list[str], chay_thu: b
                 gui_tao_moi(client, tths_id, [(info_gcn_moi(k["gcn"], k["da_ky"]), k["path"]) for k in ds])
             else:
                 bs.gui_hsq(client, hoso, items_hsq_co_san(hoso, ds))
+        except core.HetPhien:
+            raise
         except Exception as exc:
             rows += [_dong(madon, k, trang_thai="Lỗi", ghi_chu=core.rut_gon_text(exc, 300)) for k in ds]
             log(f"   ❌ {core.rut_gon_text(exc, 300)}")
@@ -361,6 +363,9 @@ def chay(
             except Exception as exc:
                 rows.append(_dong(madon, trang_thai="Lỗi", ghi_chu=core.rut_gon_text(exc, 300)))
                 log(f"   ❌ {core.rut_gon_text(exc, 300)}")
+                if isinstance(exc, core.HetPhien):
+                    log(f"❌ {exc} — ĐÃ DỪNG: lấy lại session (hoặc dán token + cookie mới) rồi chạy lại.")
+                    break
             excel = _ghi_an_toan(excel, rows)
             time.sleep(core.REQUEST_DELAY_SECONDS)
     finally:

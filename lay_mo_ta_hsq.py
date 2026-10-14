@@ -173,6 +173,10 @@ def chay(client, ids: list[int], out_path: str, nen_dung=lambda: False, bao_tien
                     dong = [{"madon": id_don, "ghichu": "Không lấy được chi tiết đơn"}]
                 else:
                     dong = dong_tu_don(id_don, detail)
+            except core.HetPhien as exc:
+                rows.append({"madon": id_don, "ghichu": f"Lỗi: {core.rut_gon_text(exc, 300)}"})
+                log(f"❌ {exc} — ĐÃ DỪNG: lấy lại session (hoặc dán token + cookie mới) rồi chạy lại.")
+                break
             except Exception as exc:
                 dong = [{"madon": id_don, "ghichu": f"Lỗi: {core.rut_gon_text(exc, 300)}"}]
             rows += dong

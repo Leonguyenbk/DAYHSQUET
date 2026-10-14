@@ -9,7 +9,7 @@ Cấu trúc thư mục:
             Giấy chứng nhận CP 099228.pdf
         12913166_Nguyen Van A/            ← được, chỉ lấy dãy số đầu
             03_Trích lục thửa đất.pdf     ← tên file tải bằng TaiDayHSQ ("NN_<mô tả>") cũng được
-            PC_NGUYEN VAN A-GCN.pdf       ← thêm "-GCN" cuối tên: thay file + ghi nhận là Giấy chứng nhận
+            24232_GCN_DH 770214-GCN.pdf   ← thêm "-GCN" cuối tên + có số GCN: thay file + ghi nhận Giấy chứng nhận
             24232_GCN_BA 796153-GCN DH 770214.pdf  ← "-GCN <số phát hành>": chỉ rõ gắn GCN nào
 
 Với mỗi đơn:
@@ -25,8 +25,8 @@ Với mỗi đơn:
      Giấy chứng nhận / Đơn đăng ký / Thông báo xác nhận → không gửi (MPLIS sẽ từ chối: "Hồ sơ quét không
      đảm bảo thành phần theo quy định"), báo trong Excel.
      File đặt tên "<mô tả>-GCN" / "<mô tả>-GCN <số phát hành>" → luôn ghi nhận là Giấy chứng nhận, gắn GCN
-     theo số ghi trong tên file; không ghi số thì: đơn có 1 GCN hiện hành → GCN đó, nhiều GCN → GCN có số
-     nằm trong mô tả. Không xác định được → bỏ qua file đó.
+     theo số ghi trong tên file; không ghi số thì GCN có số nằm trong mô tả / tên file. Không có số GCN
+     hiện hành nào → bỏ qua file đó (không gán bừa).
   4. Xác nhận: số thành phần không giảm (giảm → DỪNG TOÀN BỘ), thành phần thay phải có nodeId mới,
      loại đã bổ sung phải đúng trên MPLIS.
 Không tạo HSQ mới, không thêm thành phần: đơn chưa có HSQ / file không khớp mô tả nào → báo lại.
@@ -225,14 +225,14 @@ def gcn_cho_file_danh_dau(detail: dict[str, Any], tp: dict[str, Any], path: str,
         if len(khop) == 1:
             return khop[0], ""
         return None, f"Tên file ghi GCN '{so_ghi}' nhưng GCN hiện hành của đơn là: {ten_ds}"
-    if len(ds) == 1:
-        return ds[0], ""
+    # Không ghi số sau "-GCN" → số GCN phải nằm trong mô tả / tên file (không gán bừa dù đơn chỉ 1 GCN).
     chuoi = chuan_hoa(tp["node"].get("moTa")) + chuan_hoa(os.path.basename(path))
     khop = [g for g in ds if len(chuan_hoa(g.get("soPhatHanh"))) >= 5 and chuan_hoa(g.get("soPhatHanh")) in chuoi]
     if len(khop) == 1:
         return khop[0], ""
-    vd = f"{tach_ten_file(path)[1]} {ds[0].get('soPhatHanh')}"
-    return None, (f"Đơn có {len(ds)} GCN ({ten_ds}) — ghi số vào tên file để chỉ rõ, vd '{vd}.pdf'")
+    vd = f"{(tach_hau_to_gcn(tach_ten_file(path)[1]) or (tach_ten_file(path)[1],))[0]}-GCN {ds[0].get('soPhatHanh')}"
+    return None, (f"Tên file / mô tả không chứa số GCN hiện hành nào của đơn ({ten_ds}) — ghi số vào tên file, "
+                  f"vd '{vd}.pdf'")
 
 
 def gan_loai_gcn(node: dict[str, Any], gcn: dict[str, Any]) -> None:
@@ -377,6 +377,8 @@ def xu_ly_don(client: core.MplisClient, madon: int, pdfs: list[str], chay_thu: b
         node_ids_truoc = [str(n.get("nodeId") or "") for n in nodes]
         try:
             day.gui_ca_hsq(client, hoso_gui, thay)
+        except core.HetPhien:
+            raise
         except Exception as exc:
             rows += [dong_viec(tp, trang_thai="Lỗi", ghi_chu=core.rut_gon_text(exc, 300)) for tp in co_viec]
             log(f"   ❌ {core.rut_gon_text(exc, 300)}")
@@ -501,6 +503,9 @@ def chay(
             except Exception as exc:
                 rows += [_dong(madon, p, trang_thai="Lỗi", ghi_chu=core.rut_gon_text(exc, 300)) for p in pdfs]
                 log(f"   ❌ {core.rut_gon_text(exc, 300)}")
+                if isinstance(exc, core.HetPhien):
+                    log(f"❌ {exc} — ĐÃ DỪNG: lấy lại session (hoặc dán token + cookie mới) rồi chạy lại.")
+                    break
             excel = _ghi_an_toan(excel, rows)
             time.sleep(core.REQUEST_DELAY_SECONDS)
     finally:

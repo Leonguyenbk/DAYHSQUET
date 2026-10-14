@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Giao diện Flet: đẩy HSQ theo mô tả (thư mục mã đơn) — file đuôi '-GCN' gán cho mọi GCN của đơn.
+"""Giao diện Flet: đẩy HSQ theo mô tả (thư mục mã đơn) — file đuôi '-GCN' gán cho GCN có số trong tên file.
 
 <thư mục gốc>/<madon>/<mô tả>.pdf, <...>-GCN.pdf (day_hsq_mota_gan_gcn.py).
 Khung đăng nhập, nhật ký, quét thư mục dùng lại từ day_hsq_theo_mota_flet.DayHsqTheoMoTaApp.
@@ -21,7 +21,7 @@ from tai_hsq_don_flet import APP_DIR, CyberTheme
 
 
 class DayHsqMoTaGanGcnApp(DayHsqTheoMoTaApp):
-    WINDOW_TITLE = "MPLIS • Đẩy HSQ theo mô tả + file -GCN cho mọi GCN"
+    WINDOW_TITLE = "MPLIS • Đẩy HSQ theo mô tả + file -GCN theo số GCN"
 
     def _build_body(self) -> ft.Control:
         self.out_dir = self._input("Thư mục gốc (chứa các thư mục <mã đơn>)", expand=True)
@@ -43,11 +43,12 @@ class DayHsqMoTaGanGcnApp(DayHsqTheoMoTaApp):
                 "• Mỗi đơn 1 thư mục con, tên bắt đầu bằng mã đơn: 13456477 hoặc 13456477_Nguyen Van A.\n"
                 "• File thường: tên file = mô tả HSQ ('Đơn đăng ký.pdf', '03_Trích lục.pdf', được '_signed', tên "
                 "chứa nguyên mô tả dài cũng được) → thay file thành phần đó, giữ nguyên loại HSQ.\n"
-                "• File có '-GCN' cuối tên (vd 'PC_NGUYEN VAN A-GCN.pdf') → gán cho MỌI GCN hiện hành của đơn: "
-                "thay thành phần đã gắn GCN → thay thành phần có mô tả trùng tên file (bỏ '-GCN') → thêm thành "
-                "phần 'Giấy chứng nhận <số>' → đơn chưa có HSQ thì tạo HSQ mới. Mỗi GCN 1 thành phần, ghi nhận "
-                "loại Giấy chứng nhận.\n"
-                "• '...-GCN DH 770214.pdf' → chỉ cho GCN đó; GCN còn lại dùng file '-GCN' không ghi số.\n"
+                "• File có '-GCN' cuối tên → chỉ gán cho GCN hiện hành có SỐ PHÁT HÀNH nằm trong tên file "
+                "(vd '24221_GCN_DH 770214-GCN.pdf', 'PC_A-GCN DH 770214.pdf'; tên chứa 2 số → gán cả 2 GCN). "
+                "Tên file không có số GCN nào của đơn → KHÔNG đẩy, báo Excel.\n"
+                "• Mỗi GCN: thay thành phần đã gắn GCN → thay thành phần có mô tả trùng tên file (bỏ '-GCN') → "
+                "thêm thành phần 'Giấy chứng nhận <số>' → đơn chưa có HSQ thì tạo HSQ mới; ghi nhận loại "
+                "Giấy chứng nhận.\n"
                 "• HSQ không có thành phần loại GCN / Đơn đăng ký / Thông báo xác nhận → không gửi, báo Excel.\n"
                 "• Sau khi gửi kiểm tra lại; MPLIS bị giảm thành phần → dừng toàn bộ; 3 đơn liên tiếp không đọc "
                 "được (hết phiên) → dừng.\n"

@@ -323,6 +323,9 @@ def day_tu_excel(
                 thong_ke["loi"] += len(ds_don)
                 log(f"❌ Đơn {madon}: {core.rut_gon_text(exc, 300)}")
                 luu_excel(wb, excel_path)
+                if isinstance(exc, core.HetPhien):
+                    log(f"❌ {exc} — ĐÃ DỪNG: lấy lại session (hoặc dán token + cookie mới) rồi chạy lại.")
+                    break
                 continue
 
             theo_hsq: dict[int, list[dict]] = {}
@@ -374,6 +377,8 @@ def day_tu_excel(
                 node_ids_truoc = {i: str(x.get("nodeId") or "") for i, x in enumerate(nodes)}
                 try:
                     gui_ca_hsq(client, hoso, thay)
+                except core.HetPhien:
+                    raise
                 except Exception as exc:
                     for r in dong_thay.values():
                         ghi_dong(ws, col, r, trang_thai_day="Lỗi", ghi_chu_day=core.rut_gon_text(exc, 300))
