@@ -24,8 +24,10 @@ Với mỗi đơn:
      Thành phần đã nhận file "-GCN" thì file thường cùng mô tả bị bỏ qua.
   4. Mỗi HSQ gửi 1 request kèm ĐỦ thành phần (giữ nguyên thành phần không đổi). HSQ không có thành phần loại
      Giấy chứng nhận / Đơn đăng ký / Thông báo xác nhận → không gửi (MPLIS sẽ từ chối), báo trong Excel.
+     Tuỳ chọn giay_to: HSQ có đẩy GCN → mọi thành phần khác của HSQ đó chuyển loại Giấy tờ (giữ thành phần
+     GCN gắn GCN hiện hành chưa có file lần này); HSQ không đẩy GCN → không đụng.
   5. Xác nhận: số thành phần không giảm (giảm → DỪNG TOÀN BỘ), thành phần thay có nodeId mới, mỗi GCN có
-     thành phần loại Giấy chứng nhận gắn đúng GCN.
+     thành phần loại Giấy chứng nhận gắn đúng GCN, thành phần chuyển Giấy tờ đã đúng loại.
 """
 
 from __future__ import annotations
@@ -46,7 +48,7 @@ log = thd.log
 
 EXCEL_HEADERS = ["stt", "madon", "thu_muc", "file", "hosoquetid", "vitri", "mota", "loaihosoquet", "so_gcn",
                  "viec", "da_ky_so", "trang_thai", "ghi_chu"]
-EXCEL_WIDTHS = {"stt": 6, "madon": 12, "thu_muc": 22, "file": 45, "hosoquetid": 11, "vitri": 6, "mota": 45,
+EXCEL_WIDTHS = {"stt": 6, "madon": 12, "thu_muc": 40, "file": 45, "hosoquetid": 11, "vitri": 6, "mota": 45,
                 "loaihosoquet": 18, "so_gcn": 14, "viec": 30, "da_ky_so": 8, "trang_thai": 13, "ghi_chu": 60}
 MAU_TRANG_THAI = {"Đã đẩy": "C6EFCE", "Lỗi": "F4CCCC", "Bỏ qua": "FFF2CC", "Chạy thử": "D9EAF7",
                   "Giữ nguyên": "EDEDED"}
@@ -215,19 +217,49 @@ def _bo_sung_tu_mo_ta(detail: dict[str, Any], ds_tp: list[dict]) -> dict[int, di
     return kq
 
 
-def items_hsq(hoso: dict[str, Any], ds: list[dict]) -> list[tuple[dict, str | None]]:
-    """ĐỦ thành phần hiện có (thay / ghi nhận loại / giữ nguyên) + thành phần GCN mới, theo thứ tự."""
+LOAI_GIAY_TO = 0
+
+
+def thanh_phan_sang_giay_to(hoso: dict[str, Any], ds: list[dict], gcn_giu: set[int]) -> list[dict[str, Any]]:
+    """
+    HSQ có đẩy GCN lần này → mọi thành phần khác chuyển loại Giấy tờ. Giữ nguyên: thành phần nhận GCN lần này,
+    thành phần GCN gắn GCN hiện hành chưa có file lần này (gcn_giu), thành phần đã là Giấy tờ.
+    HSQ không đẩy GCN → [] (không đụng). → [{"hoso", "node", "vi_tri"}].
+    """
+    if not any(v["gcn"] for v in ds):
+        return []
+    nhan_gcn = {v["tp"]["vi_tri"] for v in ds if v["tp"] and v["gcn"]}
+    kq = []
+    for i, node in enumerate(day.cac_node(hoso)):
+        loai = core.safe_int(node.get("loaiHoSoQuet"), -1)
+        if i in nhan_gcn or (loai == 1 and core.safe_int(node.get("giayChungNhanId")) in gcn_giu):
+            continue
+        if loai == LOAI_GIAY_TO and not node.get("laGiayChungNhan"):
+            continue
+        kq.append({"hoso": hoso, "node": node, "vi_tri": i})
+    return kq
+
+
+def items_hsq(hoso: dict[str, Any], ds: list[dict],
+              giay_to: list[dict] | None = None) -> list[tuple[dict, str | None]]:
+    """ĐỦ thành phần hiện có (thay / ghi nhận loại / giữ nguyên / sang Giấy tờ) + thành phần GCN mới, theo thứ tự."""
     hsq_id = core.safe_int(hoso.get("hoSoQuetId"))
     theo_vi_tri = {v["tp"]["vi_tri"]: v for v in ds if v["tp"]}
+    sang_giay_to = {t["vi_tri"] for t in giay_to or []}
     items: list[tuple[dict, str | None]] = []
     for i, node in enumerate(day.cac_node(hoso)):
         v = theo_vi_tri.get(i)
         if v is None:
-            items.append((day.info_giu_nguyen(node), None))
+            info = day.info_giu_nguyen(node)
+            if i in sang_giay_to:
+                info.update(loaiHoSoQuet=LOAI_GIAY_TO, laGiayChungNhan=False)
+            items.append((info, None))
             continue
         info = day.info_thay_file(node, hsq_id, v["da_ky"]) if v["path"] else day.info_giu_nguyen(node)
         if v["gcn"]:
             dm.gan_loai_gcn(info, v["gcn"])
+        elif i in sang_giay_to:
+            info.update(loaiHoSoQuet=LOAI_GIAY_TO, laGiayChungNhan=False)
         items.append((info, v["path"] or None))
     items += [(dg.info_gcn_moi(v["gcn"], v["da_ky"]), v["path"]) for v in ds if v["kieu"] == "them"]
     return items
@@ -245,7 +277,7 @@ def _dong(madon: int, path: str = "", tp: dict | None = None, v: dict | None = N
     loai = core.safe_int(node.get("loaiHoSoQuet"), -1)
     return {
         "madon": madon,
-        "thu_muc": os.path.basename(os.path.dirname(path)) if path else "",
+        "thu_muc": os.path.dirname(path) if path else "",
         "file": os.path.basename(path) if path else "",
         "hosoquetid": hoso.get("hoSoQuetId", ""),
         "vitri": tp["stt"] if tp else "",
@@ -264,7 +296,16 @@ def _kiem_tra_loai_bat_buoc(hoso: dict[str, Any], ds: list[dict]) -> bool:
         core.safe_int(n.get("loaiHoSoQuet"), -1) in dm.LOAI_BAT_BUOC for n in day.cac_node(hoso))
 
 
-def xu_ly_don(client: core.MplisClient, madon: int, pdfs: list[str], chay_thu: bool) -> list[dict[str, Any]]:
+def _dong_giay_to(madon: int, t: dict[str, Any], **kw) -> dict[str, Any]:
+    node = t["node"]
+    loai = core.safe_int(node.get("loaiHoSoQuet"), -1)
+    return {"madon": madon, "hosoquetid": t["hoso"].get("hoSoQuetId", ""), "vitri": t["vi_tri"] + 1,
+            "mota": node.get("moTa") or "", "loaihosoquet": core.LOAI_HO_SO_QUET_OPTIONS.get(loai, ""),
+            "viec": "Chuyển Giấy tờ", **kw}
+
+
+def xu_ly_don(client: core.MplisClient, madon: int, pdfs: list[str], chay_thu: bool,
+              giay_to: bool = False) -> list[dict[str, Any]]:
     if not pdfs:
         return [_dong(madon, trang_thai="Bỏ qua", ghi_chu="Thư mục đơn không có file PDF")]
     detail = client.lay_chi_tiet_don(madon)
@@ -293,27 +334,42 @@ def xu_ly_don(client: core.MplisClient, madon: int, pdfs: list[str], chay_thu: b
             continue
         nhom.append((h, ds))
 
+    # GCN hiện hành không có file lần này: thành phần GCN đang gắn nó vẫn giữ loại GCN khi chuyển Giấy tờ.
+    gcn_day = {core.safe_int(v["gcn"].get("giayChungNhanId")) for v in viec if v["gcn"]}
+    gcn_giu = {core.safe_int(g.get("giayChungNhanId")) for g in bs.gcn_hien_hanh(detail)} - gcn_day
+    da_chuyen: set[tuple[int, int]] = set()  # (id HSQ, vị trí) chuyển Giấy tờ
     for hoso, ds in nhom:
         log(f"   {'HSQ MỚI' if hoso is None else 'HSQ ' + str(hoso.get('hoSoQuetId'))}:")
         for v in ds:
             log(f"     {mo_ta_viec(v)}"
                 + (f" ← {os.path.basename(v['path'])}{' (đã ký số)' if v['da_ky'] else ''}" if v["path"] else "")
                 + (f"  —  {v['tp']['node'].get('moTa')}" if v["tp"] else ""))
+        giay_to_hsq = thanh_phan_sang_giay_to(hoso, ds, gcn_giu) if giay_to and hoso is not None else []
+        for t in giay_to_hsq:
+            log(f"     Chuyển Giấy tờ  —  {t['node'].get('moTa')} "
+                f"[{core.LOAI_HO_SO_QUET_OPTIONS.get(core.safe_int(t['node'].get('loaiHoSoQuet'), -1), 'chưa có loại')}]")
+            da_chuyen.add((id(hoso), t["vi_tri"]))
+        if giay_to and hoso is not None and not any(v["gcn"] for v in ds):
+            log("     (HSQ không đẩy GCN → không chuyển Giấy tờ)")
         if chay_thu:
             rows += [_dong(madon, v=v, trang_thai="Chạy thử", ghi_chu=f"Sẽ {mo_ta_viec(v).lower()}") for v in ds]
+            rows += [_dong_giay_to(madon, t, trang_thai="Chạy thử", ghi_chu="Sẽ chuyển loại Giấy tờ")
+                     for t in giay_to_hsq]
             continue
-        rows += _gui_va_xac_nhan(client, madon, detail, hoso, ds)
+        rows += _gui_va_xac_nhan(client, madon, detail, hoso, ds, giay_to_hsq)
         time.sleep(core.REQUEST_DELAY_SECONDS)
 
     # ---- thành phần không đụng tới
     co_viec = {v["tp"]["stt"] for v in viec if v["tp"]}
     rows += [_dong(madon, tp=tp, trang_thai="Giữ nguyên", ghi_chu="Không có file mới")
-             for tp in dm.thanh_phan_cua_don(detail) if tp["stt"] not in co_viec]
+             for tp in dm.thanh_phan_cua_don(detail)
+             if tp["stt"] not in co_viec and (id(tp["hoso"]), tp["vi_tri"]) not in da_chuyen]
     return rows
 
 
 def _gui_va_xac_nhan(client: core.MplisClient, madon: int, detail: dict[str, Any], hoso: dict | None,
-                     ds: list[dict]) -> list[dict[str, Any]]:
+                     ds: list[dict], giay_to: list[dict] | None = None) -> list[dict[str, Any]]:
+    giay_to = giay_to or []
     nodes = day.cac_node(hoso) if hoso else []
     node_id_truoc = {v["tp"]["vi_tri"]: str(v["tp"]["node"].get("nodeId") or "") for v in ds if v["tp"]}
     try:
@@ -323,12 +379,13 @@ def _gui_va_xac_nhan(client: core.MplisClient, madon: int, detail: dict[str, Any
                 raise RuntimeError("Không tìm được thongTinHoSoId của đơn để tạo HSQ mới")
             dg.gui_tao_moi(client, tths_id, [(dg.info_gcn_moi(v["gcn"], v["da_ky"]), v["path"]) for v in ds])
         else:
-            bs.gui_hsq(client, hoso, items_hsq(hoso, ds))
+            bs.gui_hsq(client, hoso, items_hsq(hoso, ds, giay_to))
     except core.HetPhien:
         raise
     except Exception as exc:
         log(f"   ❌ {core.rut_gon_text(exc, 300)}")
-        return [_dong(madon, v=v, trang_thai="Lỗi", ghi_chu=core.rut_gon_text(exc, 300)) for v in ds]
+        return ([_dong(madon, v=v, trang_thai="Lỗi", ghi_chu=core.rut_gon_text(exc, 300)) for v in ds]
+                + [_dong_giay_to(madon, t, trang_thai="Lỗi", ghi_chu=core.rut_gon_text(exc, 300)) for t in giay_to])
 
     # ---- xác nhận
     detail_moi = client.lay_chi_tiet_don(madon) or {}
@@ -365,6 +422,16 @@ def _gui_va_xac_nhan(client: core.MplisClient, madon: int, detail: dict[str, Any
         else:
             rows.append(_dong(madon, v=v, trang_thai="Đã đẩy", ghi_chu=time.strftime("%d/%m/%Y %H:%M:%S")))
             log(f"   ✅ {mo_ta_viec(v)}" + (f": {v['tp']['node'].get('moTa')}" if v["tp"] else ""))
+    for t in giay_to:
+        tp_id = core.safe_int(t["node"].get("thanhPhanHoSoQuetId"))
+        node_moi = next((n for n in nodes_moi if core.safe_int(n.get("thanhPhanHoSoQuetId")) == tp_id), None) or {}
+        if core.safe_int(node_moi.get("loaiHoSoQuet"), -1) == LOAI_GIAY_TO and not node_moi.get("laGiayChungNhan"):
+            rows.append(_dong_giay_to(madon, t, trang_thai="Đã đẩy", ghi_chu=time.strftime("%d/%m/%Y %H:%M:%S")))
+            log(f"   ✅ Chuyển Giấy tờ: {t['node'].get('moTa')}")
+        else:
+            rows.append(_dong_giay_to(madon, t, trang_thai="Lỗi",
+                                      ghi_chu="Server báo OK nhưng loại chưa thành Giấy tờ (kiểm tra trên MPLIS)"))
+            log(f"   ❌ Chuyển Giấy tờ: {t['node'].get('moTa')} — server báo OK nhưng loại chưa đổi")
     return rows
 
 
@@ -412,18 +479,20 @@ def chay(
     goc: str,
     chay_thu: bool = True,
     nen_dung: Callable[[], bool] = lambda: False,
+    giay_to: bool = False,
     bao_tien_do: Callable[[int, int, str], None] = lambda done, total, label: None,
 ) -> str:
     """Chạy cho mọi thư mục mã đơn trong `goc`; trả về đường dẫn Excel kết quả (ghi trong `goc`)."""
     theo_don, khong_nhan = dm.quet_thu_muc_goc(goc)
     if khong_nhan:
-        log(f"⚠ Bỏ qua {len(khong_nhan)} thư mục không bắt đầu bằng mã đơn: {', '.join(khong_nhan[:10])}"
+        log(f"⚠ Bỏ qua {len(khong_nhan)} thư mục có PDF nhưng không nằm trong thư mục mã đơn nào: {', '.join(khong_nhan[:10])}"
             + (" ..." if len(khong_nhan) > 10 else ""))
     if not theo_don:
         raise RuntimeError(f"Không có thư mục mã đơn nào trong {goc}")
     excel = os.path.join(goc, f"ket_qua_day_hsq_gan_gcn_{'thu_' if chay_thu else ''}"
                               f"{time.strftime('%Y%m%d_%H%M%S')}.xlsx")
-    log(f"{'[CHẠY THỬ] ' if chay_thu else ''}{len(theo_don)} đơn | {sum(len(v) for v in theo_don.values())} file PDF")
+    log(f"{'[CHẠY THỬ] ' if chay_thu else ''}{len(theo_don)} đơn | {sum(len(v) for v in theo_don.values())} file PDF"
+        + (" | HSQ có đẩy GCN: thành phần khác → Giấy tờ" if giay_to else ""))
 
     rows: list[dict[str, Any]] = []
     loi_lien_tiep = 0
@@ -435,7 +504,7 @@ def chay(
             bao_tien_do(n - 1, len(theo_don), f"Đơn {madon} ({n}/{len(theo_don)})")
             log(f"--- [{n}/{len(theo_don)}] Đơn {madon}: {len(pdfs)} file ---")
             try:
-                dong = xu_ly_don(client, madon, pdfs, chay_thu)
+                dong = xu_ly_don(client, madon, pdfs, chay_thu, giay_to)
                 rows += dong
                 loi_lien_tiep = loi_lien_tiep + 1 if dong and dong[0].get("ghi_chu") == dm.LOI_CHI_TIET else 0
                 if loi_lien_tiep >= dm.DUNG_SAU_SO_DON_LOI:

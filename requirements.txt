@@ -5,3 +5,7 @@ webdriver-manager
 customtkinter
 flet
 flet-desktop
+PyMuPDF
+google-genai
+rich
+pypdfium2

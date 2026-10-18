@@ -48,7 +48,7 @@ log = thd.log
 
 EXCEL_HEADERS = ["stt", "madon", "thu_muc", "file", "hosoquetid", "vitri", "mota", "loaihosoquet",
                  "loai_moi", "da_ky_so", "trang_thai", "ghi_chu"]
-EXCEL_WIDTHS = {"stt": 6, "madon": 12, "thu_muc": 22, "file": 45, "hosoquetid": 11, "vitri": 6, "mota": 45,
+EXCEL_WIDTHS = {"stt": 6, "madon": 12, "thu_muc": 40, "file": 45, "hosoquetid": 11, "vitri": 6, "mota": 45,
                 "loaihosoquet": 18, "loai_moi": 28, "da_ky_so": 8, "trang_thai": 13, "ghi_chu": 60}
 # MPLIS chỉ lưu HSQ có ít nhất 1 thành phần thuộc các loại này (Giấy chứng nhận / Đơn đăng ký / Thông báo xác nhận).
 LOAI_BAT_BUOC = {1, 2, 3}
@@ -63,7 +63,8 @@ MAU_TRANG_THAI = {"Đã thay": "C6EFCE", "Đã bổ sung loại": "C6EFCE", "L�
 
 def chuan_hoa(s: Any) -> str:
     """Bỏ dấu, chữ thường, chỉ giữ chữ + số (tên file không chứa được / : ? ... nên bỏ hết ký tự đặc biệt)."""
-    s = core.remove_accents(str(s or "")).lower().replace("đ", "d")
+    # "ð" (U+00D0/U+00F0) nhìn y hệt "Đ" — hay gặp ở văn bản chuyển từ VNI/TCVN3.
+    s = core.remove_accents(str(s or "")).lower().replace("đ", "d").replace("ð", "d")
     return re.sub(r"[^a-z0-9]+", "", s)
 
 
@@ -86,20 +87,39 @@ def ma_don_tu_thu_muc(ten: str) -> int:
 
 
 def quet_thu_muc_goc(goc: str) -> tuple[dict[int, list[str]], list[str]]:
-    """{mã đơn: [file PDF]} theo thư mục con + danh sách thư mục con không nhận ra mã đơn."""
+    """
+    Quét TOÀN BỘ cây thư mục dưới `goc` (mọi cấp) → ({mã đơn: [file PDF]}, [thư mục có PDF nhưng không thuộc mã đơn]).
+
+    - Thư mục có tên bắt đầu bằng mã đơn → PDF trong nó và mọi thư mục con của nó thuộc đơn đó,
+      trừ khi thư mục con lại bắt đầu bằng mã đơn khác (thư mục mã đơn gần nhất thắng).
+    - Thư mục không có mã (Xã / Thôn / đợt…) → tiếp tục đi xuống tìm.
+    - Danh sách thứ 2: đường dẫn tương đối các thư mục có PDF mà không nằm trong thư mục mã đơn nào.
+    """
     theo_don: dict[int, list[str]] = {}
     khong_nhan: list[str] = []
-    for ten in sorted(os.listdir(goc)):
-        thu_muc = os.path.join(goc, ten)
-        if not os.path.isdir(thu_muc):
+    goc = os.path.abspath(goc)
+    loi_doc: list[str] = []
+
+    for thu_muc, ds_con, ds_file in os.walk(goc, onerror=lambda e: loi_doc.append(str(e))):
+        ds_con.sort()
+        tuong_doi = os.path.relpath(thu_muc, goc)
+        # Mã đơn = thư mục mã đơn gần nhất trên đường dẫn (không tính chính `goc`).
+        madon = 0
+        if tuong_doi != ".":
+            for phan in reversed(tuong_doi.split(os.sep)):
+                madon = ma_don_tu_thu_muc(phan)
+                if madon:
+                    break
+        pdfs = [os.path.join(thu_muc, f) for f in sorted(ds_file) if f.lower().endswith(".pdf")]
+        if not pdfs:
             continue
-        madon = ma_don_tu_thu_muc(ten)
-        if not madon:
-            khong_nhan.append(ten)
-            continue
-        pdfs = [os.path.join(thu_muc, f) for f in sorted(os.listdir(thu_muc))
-                if f.lower().endswith(".pdf") and os.path.isfile(os.path.join(thu_muc, f))]
-        theo_don.setdefault(madon, []).extend(pdfs)
+        if madon:
+            theo_don.setdefault(madon, []).extend(pdfs)
+        else:
+            khong_nhan.append(tuong_doi if tuong_doi != "." else "(thư mục gốc)")
+
+    if loi_doc:
+        log(f"⚠ Không đọc được {len(loi_doc)} thư mục: {'; '.join(loi_doc[:3])}")
     return theo_don, khong_nhan
 
 
@@ -249,7 +269,7 @@ def _dong(madon: int, path: str = "", tp: dict | None = None, **kw) -> dict[str,
     loai = core.safe_int(node.get("loaiHoSoQuet"), -1)
     return {
         "madon": madon,
-        "thu_muc": os.path.basename(os.path.dirname(path)) if path else "",
+        "thu_muc": os.path.dirname(path) if path else "",
         "file": os.path.basename(path) if path else "",
         "hosoquetid": (tp or {}).get("hoso", {}).get("hoSoQuetId", "") if tp else "",
         "vitri": tp["stt"] if tp else "",
@@ -470,7 +490,7 @@ def chay(
     """Chạy cho mọi thư mục mã đơn trong `goc`; trả về đường dẫn Excel kết quả (ghi trong `goc`)."""
     theo_don, khong_nhan = quet_thu_muc_goc(goc)
     if khong_nhan:
-        log(f"⚠ Bỏ qua {len(khong_nhan)} thư mục không bắt đầu bằng mã đơn: {', '.join(khong_nhan[:10])}"
+        log(f"⚠ Bỏ qua {len(khong_nhan)} thư mục có PDF nhưng không nằm trong thư mục mã đơn nào: {', '.join(khong_nhan[:10])}"
             + (" ..." if len(khong_nhan) > 10 else ""))
     if not theo_don:
         raise RuntimeError(f"Không có thư mục mã đơn nào trong {goc}")

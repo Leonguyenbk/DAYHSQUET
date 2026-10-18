@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "PyMuPDF>=1.24",
+    "pypdfium2>=4.30",
     "google-genai>=1.0",
     "rich>=13.7",
     "flet[desktop]>=0.28",

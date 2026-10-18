@@ -26,6 +26,9 @@ class DayHsqMoTaGanGcnApp(DayHsqTheoMoTaApp):
     def _build_body(self) -> ft.Control:
         self.out_dir = self._input("Thư mục gốc (chứa các thư mục <mã đơn>)", expand=True)
         self.out_dir.value = str(APP_DIR / "hsq_tai_ve")
+        self.giay_to = ft.Checkbox(
+            label="HSQ có đẩy GCN: chuyển mọi thành phần khác của HSQ đó sang loại Giấy tờ", value=True,
+            label_style=ft.TextStyle(color=CyberTheme.AMBER, size=12))
         self.excel_text = ft.Text("", color=CyberTheme.GREEN, size=10, selectable=True)
         self.btn_quet = self._button("Quét thư mục", ft.Icons.FOLDER_ZIP_ROUNDED, CyberTheme.PURPLE, self._quet)
         self.btn_kiem_tra = self._button("Kiểm tra (chạy thử)", ft.Icons.SEARCH_ROUNDED, CyberTheme.BLUE,
@@ -39,6 +42,7 @@ class DayHsqMoTaGanGcnApp(DayHsqTheoMoTaApp):
             ft.Row(spacing=4, controls=[
                 self.out_dir, self._icon_btn(ft.Icons.FOLDER_OPEN_ROUNDED, "Chọn thư mục", self._chon_out_dir),
             ]),
+            self.giay_to,
             self._note(
                 "• Mỗi đơn 1 thư mục con, tên bắt đầu bằng mã đơn: 13456477 hoặc 13456477_Nguyen Van A.\n"
                 "• File thường: tên file = mô tả HSQ ('Đơn đăng ký.pdf', '03_Trích lục.pdf', được '_signed', tên "
@@ -50,6 +54,9 @@ class DayHsqMoTaGanGcnApp(DayHsqTheoMoTaApp):
                 "thêm thành phần 'Giấy chứng nhận <số>' → đơn chưa có HSQ thì tạo HSQ mới; ghi nhận loại "
                 "Giấy chứng nhận.\n"
                 "• HSQ không có thành phần loại GCN / Đơn đăng ký / Thông báo xác nhận → không gửi, báo Excel.\n"
+                "• Tích 'chuyển sang Giấy tờ': HSQ nào có đẩy GCN thì mọi thành phần khác (kể cả Đơn đăng ký, "
+                "GCN cũ) → Giấy tờ, không đổi file; thành phần GCN gắn GCN hiện hành chưa có file lần này vẫn giữ. "
+                "HSQ không đẩy GCN → không đụng.\n"
                 "• Sau khi gửi kiểm tra lại; MPLIS bị giảm thành phần → dừng toàn bộ; 3 đơn liên tiếp không đọc "
                 "được (hết phiên) → dừng.\n"
                 "• Excel kết quả ghi vào thư mục gốc."
@@ -74,7 +81,7 @@ class DayHsqMoTaGanGcnApp(DayHsqTheoMoTaApp):
             return
 
         def bat_dau():
-            self._run_thread(self._worker, nguon, goc, chay_thu)
+            self._run_thread(self._worker, nguon, goc, chay_thu, bool(self.giay_to.value))
 
         if chay_thu:
             bat_dau()
@@ -83,18 +90,20 @@ class DayHsqMoTaGanGcnApp(DayHsqTheoMoTaApp):
         self._hoi_xac_nhan(
             "Xác nhận đẩy HSQ",
             f"Đẩy HSQ cho {so_don} đơn trong:\n{goc}\n\n"
-            "Thao tác GHI THẬT lên MPLIS. Nên bấm 'Kiểm tra' trước để xem file nào thay thành phần nào. Tiếp tục?",
+            + ("HSQ có đẩy GCN: mọi thành phần khác sẽ chuyển sang Giấy tờ.\n\n" if self.giay_to.value else "")
+            + "Thao tác GHI THẬT lên MPLIS. Nên bấm 'Kiểm tra' trước để xem file nào thay thành phần nào. Tiếp tục?",
             "Đẩy lên",
             bat_dau,
         )
 
-    def _worker(self, nguon: dict[str, Any], goc: str, chay_thu: bool) -> None:
+    def _worker(self, nguon: dict[str, Any], goc: str, chay_thu: bool, giay_to: bool = False) -> None:
         ket_thuc = "Hoàn tất"
         try:
             client = self._tao_client(nguon)
             excel = gg.chay(
                 client, goc, chay_thu,
                 nen_dung=lambda: self.stop_flag,
+                giay_to=giay_to,
                 bao_tien_do=lambda done, total, label: self._emit("progress", done, total, label),
             )
             self._emit("excel_kq", excel)

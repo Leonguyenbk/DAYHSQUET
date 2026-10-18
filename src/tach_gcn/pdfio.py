@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import hashlib
+import io
 import os
 from pathlib import Path
 import re
@@ -203,6 +204,58 @@ def render_page_jpeg(page: pymupdf.Page, long_edge: int = 1400, quality: int = 7
     return pixmap.tobytes("jpeg", jpg_quality=quality)
 
 
+_DECODE_PROBLEMS = ("error", "truncated", "faxd", "decode")
+
+
+def _render_with_pdfium(path: Path, index: int, long_edge: int, quality: int) -> bytes | None:
+    """Render bằng PDFium (bộ render của Chrome) — chịu được ảnh CCITT/JBIG2 lỗi mà MuPDF ra trang đen."""
+
+    try:
+        import pypdfium2 as pdfium
+    except ImportError:
+        return None
+    try:
+        document = pdfium.PdfDocument(str(path))
+        try:
+            page = document[index]
+            width, height = page.get_size()
+            image = page.render(scale=long_edge / max(width, height, 1.0)).to_pil().convert("RGB")
+            buffer = io.BytesIO()
+            image.save(buffer, "JPEG", quality=quality)
+            return buffer.getvalue()
+        finally:
+            document.close()
+    except Exception:
+        return None
+
+
+def render_page_jpeg_checked(
+    document: pymupdf.Document,
+    path: Path,
+    index: int,
+    long_edge: int = 1400,
+    quality: int = 75,
+    recovered_page_xrefs: Sequence[int] = (),
+) -> bytes:
+    """Render bằng MuPDF; MuPDF báo lỗi giải mã ảnh (vd 'overflow in 2d faxd' → trang đen) thì render lại
+    bằng PDFium. PDF đã dựng lại cây trang thì chỉ số trang không khớp file gốc → giữ kết quả MuPDF."""
+
+    old_errors = bool(pymupdf.TOOLS.mupdf_display_errors())
+    old_warnings = bool(pymupdf.TOOLS.mupdf_display_warnings())
+    pymupdf.TOOLS.mupdf_display_errors(False)
+    pymupdf.TOOLS.mupdf_display_warnings(False)
+    try:
+        pymupdf.TOOLS.mupdf_warnings(reset=True)
+        image = render_page_jpeg(document.load_page(index), long_edge, quality)
+        problems = pymupdf.TOOLS.mupdf_warnings(reset=True).lower()
+    finally:
+        pymupdf.TOOLS.mupdf_display_errors(old_errors)
+        pymupdf.TOOLS.mupdf_display_warnings(old_warnings)
+    if problems and any(word in problems for word in _DECODE_PROBLEMS) and not recovered_page_xrefs:
+        return _render_with_pdfium(path, index, long_edge, quality) or image
+    return image
+
+
 def render_pdf_pages(
     path: Path,
     page_indexes: Sequence[int],
@@ -214,7 +267,10 @@ def render_pdf_pages(
     document = open_pdf_document(path, recovered_page_xrefs)
     try:
         for index in page_indexes:
-            images.append((index + 1, render_page_jpeg(document.load_page(index))))
+            images.append(
+                (index + 1, render_page_jpeg_checked(document, path, index,
+                                                      recovered_page_xrefs=recovered_page_xrefs))
+            )
     finally:
         document.close()
     return images
@@ -336,7 +392,12 @@ def inspect_pdf(
                     gemini_all=gemini_all,
                     gemini_enabled=gemini_enabled,
                 )
-                jpeg = render_page_jpeg(page) if result.needs_gemini else None
+                jpeg = (
+                    render_page_jpeg_checked(document, path, index,
+                                             recovered_page_xrefs=recovered_xrefs)
+                    if result.needs_gemini
+                    else None
+                )
                 inspected.pages.append(
                     InspectedPage(
                         result=result,
