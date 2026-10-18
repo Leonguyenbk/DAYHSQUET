@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tach-gcn"
+version = "0.1.0"
+description = "Quét và tách các trang giấy chứng nhận trong PDF"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "PyMuPDF>=1.24",
+    "google-genai>=1.0",
+    "rich>=13.7",
+    "flet[desktop]>=0.28",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8.0"]
+
+[project.scripts]
+tach-gcn = "tach_gcn.cli:main"
+tach-gcn-gui = "tach_gcn.gui:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/tach_gcn"]
+addopts = "-ra"
+pythonpath = ["src"]
