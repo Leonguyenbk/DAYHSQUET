@@ -527,7 +527,7 @@ def chay(
                     log(f"❌ {exc} — ĐÃ DỪNG: lấy lại session (hoặc dán token + cookie mới) rồi chạy lại.")
                     break
             excel = _ghi_an_toan(excel, rows)
-            time.sleep(core.REQUEST_DELAY_SECONDS)
+            core.nghi_giua_don()
     finally:
         if rows:
             excel = _ghi_an_toan(excel, rows)

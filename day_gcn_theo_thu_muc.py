@@ -332,7 +332,7 @@ def chay(
     """Chạy cho mọi thư mục mã đơn trong `goc`; trả về đường dẫn Excel kết quả (ghi trong `goc`)."""
     theo_don, khong_nhan = dm.quet_thu_muc_goc(goc)
     if khong_nhan:
-        log(f"⚠ Bỏ qua {len(khong_nhan)} thư mục không bắt đầu bằng mã đơn: {', '.join(khong_nhan[:10])}"
+        log(f"⚠ Bỏ qua {len(khong_nhan)} thư mục có PDF nhưng không nằm trong thư mục mã đơn nào: {', '.join(khong_nhan[:10])}"
             + (" ..." if len(khong_nhan) > 10 else ""))
     theo_don = {m: p for m, p in theo_don.items() if p}
     if not theo_don:
@@ -367,7 +367,7 @@ def chay(
                     log(f"❌ {exc} — ĐÃ DỪNG: lấy lại session (hoặc dán token + cookie mới) rồi chạy lại.")
                     break
             excel = _ghi_an_toan(excel, rows)
-            time.sleep(core.REQUEST_DELAY_SECONDS)
+            core.nghi_giua_don()
     finally:
         if rows:
             excel = _ghi_an_toan(excel, rows)

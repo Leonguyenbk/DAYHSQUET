@@ -195,7 +195,11 @@ def xu_ly_don(
     gui_hsq(client, hoso, items)
 
     # ---- xác nhận
-    detail_moi = client.lay_chi_tiet_don(madon) or {}
+    try:
+        detail_moi = client.lay_chi_tiet_don(madon) or {}
+    except core.HetPhien as exc:
+        kq["ghi_chu"] = "ĐÃ GỬI nhưng hết phiên khi kiểm tra lại — kiểm tra tay trên MPLIS."
+        raise core.HetPhien(f"{kq['ghi_chu']} {exc}", ket_qua=kq) from exc
     hoso_moi = next((h for h in detail_moi.get("ListHoSoQuet") or []
                      if isinstance(h, dict) and core.safe_int(h.get("hoSoQuetId")) == hsq_id), None)
     nodes_moi = day.cac_node(hoso_moi) if hoso_moi else []
@@ -275,16 +279,17 @@ def chay(
             except day.DungKhanCap:
                 rows.append({"madon": madon, "trang_thai": "Lỗi", "ghi_chu": "MPLIS giảm thành phần — ĐÃ DỪNG"})
                 raise
+            except core.HetPhien as exc:
+                rows.append(core.dong_ket_qua_het_phien(exc, {"madon": madon}))
+                log(f"❌ {exc}")
+                log("⛔ HẾT PHIÊN — đã dừng. Lấy session mới rồi chạy tiếp các đơn chưa xử lý.")
+                raise
             except Exception as exc:
                 kq = {"madon": madon, "trang_thai": "Lỗi", "ghi_chu": core.rut_gon_text(exc, 300)}
                 log(f"   ❌ {kq['ghi_chu']}")
-                if isinstance(exc, core.HetPhien):
-                    rows.append(kq)
-                    log(f"❌ {exc} — ĐÃ DỪNG: lấy lại session (hoặc dán token + cookie mới) rồi chạy lại.")
-                    break
             rows.append(kq)
             ghi_excel(excel, rows)
-            time.sleep(core.REQUEST_DELAY_SECONDS)
+            core.nghi_giua_don()
     finally:
         ghi_excel(excel, rows)
 

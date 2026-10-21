@@ -1632,16 +1632,34 @@ class CapNhatDonHsqFletApp:
                         }
                     ]
                 else:
-                    master_results = self.processor.process_row(
-                        xa_id=cfg["xa_id"],
-                        row=representative,
-                        day_hsq=cfg["day_hsq"],
-                        chu_id=cfg["chu_id"],
-                        loai_ho_so_quet=cfg["loai_hsq"],
-                        folder_upload=cfg["folder_upload"],
-                        ngay_dang_ky_lan_dau=cfg["ngay_dk"],
-                        thay_moi_gcn=cfg["thay_moi_gcn"],
-                    )
+                    try:
+                        master_results = self.processor.process_row(
+                            xa_id=cfg["xa_id"],
+                            row=representative,
+                            day_hsq=cfg["day_hsq"],
+                            chu_id=cfg["chu_id"],
+                            loai_ho_so_quet=cfg["loai_hsq"],
+                            folder_upload=cfg["folder_upload"],
+                            ngay_dang_ky_lan_dau=cfg["ngay_dk"],
+                            thay_moi_gcn=cfg["thay_moi_gcn"],
+                        )
+                    except (core.HetPhien, core.HsqBiGiamThanhPhan) as exc:
+                        mac_dinh = {
+                            "soto": representative.get("soto", ""),
+                            "sothua": representative.get("sothua", ""),
+                            "tenfile": representative.get("tenfile", ""),
+                            "sogcn": representative.get("sogcn", ""),
+                            "tinhhinhdangkyid": representative.get("id_don", ""),
+                        }
+                        if isinstance(exc, core.HetPhien):
+                            dong = core.dong_ket_qua_het_phien(exc, mac_dinh)
+                        else:
+                            dong = {**mac_dinh, "trang_thai": "Lỗi",
+                                    "ghi_chu": f"MPLIS giảm thành phần HSQ — ĐÃ DỪNG: {exc}"}
+                        writer.append_result(dong)
+                        errors += 1
+                        total_results += 1
+                        raise
 
                 for result in master_results:
                     if (
@@ -1700,6 +1718,15 @@ class CapNhatDonHsqFletApp:
         except PermissionError:
             fatal_error = "Không lưu được file kết quả; hãy đóng file nếu đang mở trong Excel."
             self._emit("log", fatal_error, "error")
+        except core.HetPhien as exc:
+            fatal_error = "HẾT PHIÊN đăng nhập — đã dừng. Lấy session mới rồi chạy tiếp các dòng chưa xử lý."
+            self._emit("log", str(exc), "error")
+            self._emit("log", fatal_error, "error")
+            try:
+                writer.save()
+                self._thread_log("Đã lưu phần kết quả đang có.")
+            except Exception as save_exc:
+                self._emit("log", f"Không lưu được kết quả dở dang: {save_exc}", "error")
         except Exception as exc:
             fatal_error = f"Lỗi chương trình: {exc}"
             self._emit("log", fatal_error, "error")

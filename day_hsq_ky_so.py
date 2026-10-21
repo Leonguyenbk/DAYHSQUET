@@ -317,15 +317,17 @@ def day_tu_excel(
                 detail = client.lay_chi_tiet_don(core.safe_int(madon))
                 if detail is None:
                     raise RuntimeError("Không lấy được chi tiết đơn")
+            except core.HetPhien as exc:
+                for r in ds_don:
+                    ghi_dong(ws, col, r, trang_thai_day="Lỗi", ghi_chu_day=f"HẾT PHIÊN — chưa đẩy: {exc}")
+                luu_excel(wb, excel_path)
+                raise
             except Exception as exc:
                 for r in ds_don:
                     ghi_dong(ws, col, r, trang_thai_day="Lỗi", ghi_chu_day=core.rut_gon_text(exc, 300))
                 thong_ke["loi"] += len(ds_don)
                 log(f"❌ Đơn {madon}: {core.rut_gon_text(exc, 300)}")
                 luu_excel(wb, excel_path)
-                if isinstance(exc, core.HetPhien):
-                    log(f"❌ {exc} — ĐÃ DỪNG: lấy lại session (hoặc dán token + cookie mới) rồi chạy lại.")
-                    break
                 continue
 
             theo_hsq: dict[int, list[dict]] = {}
@@ -377,7 +379,10 @@ def day_tu_excel(
                 node_ids_truoc = {i: str(x.get("nodeId") or "") for i, x in enumerate(nodes)}
                 try:
                     gui_ca_hsq(client, hoso, thay)
-                except core.HetPhien:
+                except core.HetPhien as exc:
+                    for r in dong_thay.values():
+                        ghi_dong(ws, col, r, trang_thai_day="Lỗi", ghi_chu_day=f"HẾT PHIÊN — chưa đẩy: {exc}")
+                    luu_excel(wb, excel_path)
                     raise
                 except Exception as exc:
                     for r in dong_thay.values():
@@ -388,7 +393,14 @@ def day_tu_excel(
                     continue
 
                 # ---- xác nhận
-                detail_moi = client.lay_chi_tiet_don(core.safe_int(madon)) or {}
+                try:
+                    detail_moi = client.lay_chi_tiet_don(core.safe_int(madon)) or {}
+                except core.HetPhien as exc:
+                    for i, r in dong_thay.items():
+                        ghi_dong(ws, col, r, trang_thai_day="Lỗi", file_ky_so=thay[i][0],
+                                 ghi_chu_day=f"ĐÃ GỬI nhưng hết phiên khi kiểm tra lại — kiểm tra tay trên MPLIS. {exc}")
+                    luu_excel(wb, excel_path)
+                    raise
                 hoso_moi = next((h for h in detail_moi.get("ListHoSoQuet") or []
                                  if isinstance(h, dict) and core.safe_int(h.get("hoSoQuetId")) == hsq_id), None)
                 nodes_moi = cac_node(hoso_moi) if hoso_moi else []

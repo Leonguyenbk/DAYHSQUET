@@ -193,7 +193,33 @@ class TaiHsqApp:
         self.cookie = self._input("Cookie", "Dán nguyên dòng Cookie", multiline=True, min_lines=2, max_lines=4)
         self.panel_cookie = ft.Column(spacing=10, visible=False, controls=[self.token, self.cookie])
         return self._card("Phiên đăng nhập", ft.Icons.KEY_ROUNDED,
-                          ft.Column(spacing=10, controls=[self.che_do, self.panel_login, self.panel_cookie]))
+                          ft.Column(spacing=10, controls=[self.che_do, self.panel_login, self.panel_cookie,
+                                                          self._build_delay_row()]))
+
+    def _build_delay_row(self) -> ft.Control:
+        """Thời gian chờ (giây, '5' hoặc '1.5-3' = ngẫu nhiên trong khoảng) — MPLIS hỏi captcha khi gửi dồn dập.
+        Đổi là áp dụng ngay, kể cả khi đang chạy."""
+        def o_nhap(label: str, ten_bien: str) -> ft.TextField:
+            o = self._input(label, "vd 5 hoặc 1.5-3", expand=True)
+            o.value = core.ghi_khoang_giay(getattr(core, ten_bien))
+
+            def doi(_=None) -> None:
+                try:
+                    setattr(core, ten_bien, core.doc_khoang_giay(o.value))
+                    o.error_text = None
+                except ValueError:
+                    o.error_text = "Nhập số giây: 5 hoặc 1.5-3"
+                o.update()
+
+            o.on_change = doi
+            return o
+
+        self.delay_request = o_nhap("Chờ giữa các thao tác (giây)", "DELAY_GIUA_REQUEST")
+        self.delay_don = o_nhap("Chờ giữa các đơn (giây)", "DELAY_GIUA_DON")
+        return ft.Column(spacing=4, controls=[
+            ft.Row(spacing=8, controls=[self.delay_request, self.delay_don]),
+            self._note("MPLIS hỏi captcha khi gửi quá nhanh → tăng thời gian chờ. '1.5-3' = ngẫu nhiên 1,5–3 giây."),
+        ])
 
     def _build_log_card(self) -> ft.Container:
         self.progress = ft.ProgressBar(value=0, color=CyberTheme.CYAN, bgcolor=CyberTheme.BORDER_COLOR)
@@ -579,9 +605,16 @@ class TaiHsqApp:
                     break
                 self._emit("progress", n - 1, len(ids), f"Đơn {id_don} ({n}/{len(ids)})")
                 thd.log(f"--- [{n}/{len(ids)}] Đơn {id_don} ---")
+                het_phien = False
                 try:
                     kq = thd.xu_ly_don(client, downloader, id_don, out_dir, chi_kiem_tra,
                                        nen_dung=lambda: self.stop_flag)
+                except core.HetPhien as exc:
+                    thd.log(f"❌ {exc}")
+                    thd.log("⛔ HẾT PHIÊN — đã dừng. Lấy session mới rồi chạy tiếp các đơn chưa tải.")
+                    kq = thd.kq_het_phien(id_don, exc)
+                    het_phien = True
+                    ket_thuc = "HẾT PHIÊN — đã dừng"
                 except Exception as exc:
                     thd.log(f"❌ Đơn {id_don}: {core.rut_gon_text(exc, 300)}")
                     kq = {"id_don": id_don, "so_file": 0, "da_tai": 0, "loi": [str(exc)],
@@ -592,6 +625,8 @@ class TaiHsqApp:
                         thd.ghi_excel_ket_qua(excel_kq, [d for k in tong for d in k["dong"]])
                     except PermissionError:
                         thd.log("⚠ Không ghi được Excel kết quả (file đang mở?)")
+                if het_phien:
+                    break
             self._emit("progress", len(tong), len(ids), ket_thuc)
 
             so_file = sum(k["so_file"] for k in tong)
@@ -629,6 +664,10 @@ class TaiHsqApp:
             )
             if self.stop_flag:
                 ket_thuc = "Đã dừng"
+        except core.HetPhien as exc:
+            thd.log(f"❌ {exc}")
+            thd.log("⛔ HẾT PHIÊN — đã dừng. Lấy session mới rồi bấm Đẩy lại (dòng đã đẩy sẽ được bỏ qua).")
+            ket_thuc = "HẾT PHIÊN — đã dừng"
         except Exception as exc:
             thd.log(f"❌ {core.rut_gon_text(exc, 300)}")
             ket_thuc = "Lỗi"

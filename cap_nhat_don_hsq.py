@@ -29,6 +29,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import random
 import re
 import threading
 import time
@@ -72,6 +73,9 @@ PAGE_SIZE = 10
 TIMEOUT = 120
 SAVE_EVERY_ROWS = 5
 REQUEST_DELAY_SECONDS = 0.15
+# MPLIS hỏi captcha (captchaRequired) khi gửi request dồn dập → nghỉ ngẫu nhiên (giây, min-max).
+DELAY_GIUA_REQUEST = (1.5, 3.0)   # giữa 2 request bất kỳ của session (PhienGioiHan)
+DELAY_GIUA_DON = (5.0, 10.0)      # giữa 2 đơn (nghi_giua_don)
 
 # True = chỉ kiểm tra, không update thật.
 DRY_RUN = False
@@ -606,8 +610,96 @@ class ExcelResultWriter:
 # ============================ CORE API ============================
 
 
+def cac_node_hoso(hoso: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Danh sách thành phần (node) của 1 HSQ."""
+    wrapper = (hoso or {}).get("ListFileHoSoQuet") or {}
+    files = wrapper.get("ListFileHoSoQuet") if isinstance(wrapper, dict) else wrapper
+    return [n for n in files or [] if isinstance(n, dict)]
+
+
+def la_cung_thanh_phan(node: dict[str, Any], target: dict[str, Any]) -> bool:
+    """So khớp thành phần HSQ theo đối tượng, thanhPhanHoSoQuetId, NId hoặc nodeId."""
+    if node is target:
+        return True
+    for key in ("thanhPhanHoSoQuetId", "thanhPhanHoSoQuetNId", "nodeId"):
+        a, b = node.get(key), target.get(key)
+        if a and b and str(a) != "0" and str(a) == str(b):
+            return True
+    return False
+
+
+class HsqBiGiamThanhPhan(RuntimeError):
+    """MPLIS bị giảm số thành phần HSQ sau khi gửi → phải dừng toàn bộ."""
+
+
 class HetPhien(RuntimeError):
-    """MPLIS chuyển hướng / trả HTML thay vì JSON → phiên đăng nhập hết hạn: dừng cả loạt, không thử lại."""
+    """MPLIS chuyển hướng / trả HTML thay vì JSON → phiên đăng nhập hết hạn: dừng cả loạt, không thử lại.
+
+    ket_qua: dòng kết quả dở dang của đơn đang xử lý (nếu có) để ghi Excel trước khi dừng.
+    """
+
+    def __init__(self, message: str, ket_qua: dict[str, Any] | None = None):
+        super().__init__(message)
+        self.ket_qua = ket_qua
+
+
+class CanCaptcha(HetPhien):
+    """MPLIS trả captchaRequired: gửi quá nhanh → dừng cả loạt, giải captcha trên web rồi chạy lại."""
+
+
+class PhienGioiHan(requests.Session):
+    """Session tự nghỉ ngẫu nhiên DELAY_GIUA_REQUEST giây giữa 2 request (tính từ lúc request trước xong).
+
+    Giữ khoá suốt request: nhiều luồng (tải trước) dùng chung session cũng chỉ 1 request tại 1 thời điểm.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._xong_luc = 0.0
+        self._khoa = threading.Lock()
+
+    def request(self, *args, **kwargs):
+        with self._khoa:
+            cho = self._xong_luc + random.uniform(*DELAY_GIUA_REQUEST) - time.monotonic()
+            if cho > 0:
+                time.sleep(cho)
+            try:
+                return super().request(*args, **kwargs)
+            finally:
+                self._xong_luc = time.monotonic()
+
+
+def nghi_giua_don() -> None:
+    time.sleep(random.uniform(*DELAY_GIUA_DON))
+
+
+def doc_khoang_giay(text: str) -> tuple[float, float]:
+    """'5' → (5, 5); '1.5-3' / '1,5 - 3' → (1.5, 3). Sai định dạng / âm → ValueError."""
+    phan = [x.strip().replace(",", ".") for x in str(text).split("-")]
+    if not 1 <= len(phan) <= 2:
+        raise ValueError(text)
+    a, b = float(phan[0]), float(phan[-1])
+    if a < 0 or b < a:
+        raise ValueError(text)
+    return a, b
+
+
+def ghi_khoang_giay(khoang: tuple[float, float]) -> str:
+    a, b = (f"{x:g}" for x in khoang)
+    return a if a == b else f"{a}-{b}"
+
+
+def dong_ket_qua_het_phien(exc: HetPhien, mac_dinh: dict[str, Any]) -> dict[str, Any]:
+    """Dòng Excel cho đơn đang xử lý khi hết phiên."""
+    dong = dict(exc.ket_qua or mac_dinh)
+    dong["trang_thai"] = "Lỗi"
+    dong["ghi_chu"] = f"HẾT PHIÊN — ĐÃ DỪNG: {exc}"
+    return dong
+
+
+# Retry chỉ cho request ĐỌC khi lỗi mạng / 5xx. Không bao giờ retry request ghi (upload/update).
+SO_LAN_THU_LAI_DOC = 3
+CHO_THU_LAI_GIAY = (2, 5, 10)
 
 
 class MplisClient:
@@ -664,7 +756,7 @@ class MplisClient:
                 "Không lấy được token. Hãy bảo đảm đã đăng nhập thành công và đang mở trang MPLIS."
             )
 
-        session = requests.Session()
+        session = PhienGioiHan()
         user_agent = self.driver.execute_script("return navigator.userAgent;")
 
         session.headers.update(
@@ -703,7 +795,7 @@ class MplisClient:
         if not cookie_raw:
             raise RuntimeError("Chưa nhập cookie.")
 
-        session = requests.Session()
+        session = PhienGioiHan()
         session.headers.update(
             {
                 "User-Agent": (
@@ -754,12 +846,32 @@ class MplisClient:
             raise RuntimeError("Chưa lấy session từ Chrome.")
         return self.session
 
+    def _post_doc(self, url: str, **kwargs) -> requests.Response:
+        """POST cho request CHỈ ĐỌC: retry khi lỗi mạng / 5xx (backoff tăng dần). Hết phiên thì không retry."""
+        session = self._require_session()
+        kwargs.setdefault("timeout", TIMEOUT)
+        kwargs["allow_redirects"] = False
+        for lan in range(SO_LAN_THU_LAI_DOC + 1):
+            try:
+                response = session.post(url, **kwargs)
+            except (requests.ConnectionError, requests.Timeout) as exc:
+                if lan >= SO_LAN_THU_LAI_DOC:
+                    raise
+                loi = f"lỗi mạng: {rut_gon_text(exc, 120)}"
+            else:
+                if response.status_code < 500 or lan >= SO_LAN_THU_LAI_DOC:
+                    return response
+                loi = f"HTTP {response.status_code}"
+            cho = CHO_THU_LAI_GIAY[min(lan, len(CHO_THU_LAI_GIAY) - 1)]
+            self.log(f"   ⚠ {loi} — thử lại sau {cho}s ({lan + 1}/{SO_LAN_THU_LAI_DOC})")
+            time.sleep(cho)
+        raise RuntimeError("Không thể xảy ra")  # vòng lặp luôn return/raise
+
     @staticmethod
     def _check_response(response: requests.Response, api_name: str) -> None:
         if response.status_code in {301, 302, 303, 307, 308, 401, 403} or response.headers.get("Location"):
             raise HetPhien(
-                f"{api_name} bị chuyển hướng (HTTP {response.status_code}). "
-                "Phiên đăng nhập có thể đã hết hạn."
+                f"{api_name} bị chuyển hướng / từ chối (HTTP {response.status_code}) — phiên đăng nhập đã hết hạn."
             )
 
         if response.status_code == 404:
@@ -771,16 +883,24 @@ class MplisClient:
         self._check_response(response, api_name)
 
         try:
-            return response.json()
+            data = response.json()
         except requests.JSONDecodeError as exc:
-            if response.text.lstrip().startswith("<"):
+            ctype = (response.headers.get("Content-Type") or "").lower()
+            text = response.text or ""
+            if "html" in ctype or text.lstrip().startswith("<"):
                 raise HetPhien(
-                    f"{api_name} trả về trang HTML thay vì JSON (HTTP {response.status_code}). "
-                    "Phiên đăng nhập có thể đã hết hạn."
+                    f"{api_name} trả về trang HTML thay vì JSON (HTTP {response.status_code}) — "
+                    "phiên đăng nhập đã hết hạn."
                 ) from exc
             raise RuntimeError(
-                f"{api_name} không trả JSON (HTTP {response.status_code}): {response.text[:500]}"
+                f"{api_name} không trả JSON (HTTP {response.status_code}): {text[:500]}"
             ) from exc
+        if isinstance(data, dict) and data.get("captchaRequired"):
+            raise CanCaptcha(
+                f"{api_name}: MPLIS yêu cầu captcha (gửi quá nhanh) — mở MPLIS trên Chrome, thao tác 1 lần và giải "
+                "captcha, lấy lại session rồi chạy lại."
+            )
+        return data
 
     # ---------- search đơn ----------
     @staticmethod
@@ -856,7 +976,7 @@ class MplisClient:
             xa_id=xa_id, so_to=so_to, so_thua=so_thua, start=start, length=length, draw=draw
         )
 
-        response = session.post(URL_TIM_DON, data=payload, timeout=TIMEOUT, allow_redirects=False)
+        response = self._post_doc(URL_TIM_DON, data=payload)
         result = self._response_json(response, "AdvancedSearchTinhHinhDangKy")
         rows = result.get("data") or []
 
@@ -913,7 +1033,7 @@ class MplisClient:
         session = self._require_session()
         payload = {"getHoSoQuet": True, "tinhHinhDangKyIds": [int(tinh_hinh_dang_ky_id)]}
 
-        response = session.post(URL_CHI_TIET, json=payload, timeout=TIMEOUT, allow_redirects=False)
+        response = self._post_doc(URL_CHI_TIET, json=payload)
         result = self._response_json(response, "GetThongTinDangKyByTinhHinhDangKyIds")
 
         values = result.get("value") or []
@@ -953,8 +1073,15 @@ class MplisClient:
         detail: dict[str, Any] | None = None,
     ) -> str:
         """
-        Upload file PDF thật thay cho file hiện có trong HSQ hoặc tạo mới HSQ rỗng theo chuẩn MPLIS.
-        Nếu HSQ rỗng (chưa có file hoặc hoSoQuetId == 0), đẩy payload tạo mới.
+        Upload file PDF thật thay cho file hiện có trong HSQ, hoặc thêm thành phần mới.
+
+        QUAN TRỌNG: UpdateHoSoQuetExistFile coi infoHoSoQuet_1..count là TOÀN BỘ thành phần
+        của HSQ — gửi count=1 cho HSQ nhiều file sẽ xóa các file còn lại (đơn 12830794).
+        Vì vậy với HSQ đã có file, gửi ĐỦ mọi thành phần:
+          - thành phần giữ nguyên: node hiện tại, files=null
+          - thành phần thay file : metadata mới, nodeId="" + fileHoSoQuet_i
+          - target_file=None     : thêm 1 thành phần mới (mẫu tạo mới) kèm file
+        Chỉ HSQ chưa có file nào (hoặc hoSoQuetId == 0) mới gửi payload tạo mới count=1.
         """
         if not os.path.isfile(file_path):
             raise RuntimeError(f"Không tìm thấy file PDF: {file_path}")
@@ -963,26 +1090,14 @@ class MplisClient:
 
         ho_so_quet_id_int = safe_int(hoso.get("hoSoQuetId") or hoso.get("Title"), 0)
         gcn_id_int = safe_int(giay_chung_nhan_id) if giay_chung_nhan_id else None
+        nodes = cac_node_hoso(hoso)
 
         tf = target_file or {}
-        tp_id = safe_int(tf.get("thanhPhanHoSoQuetId")) or None
-        tp_nid = tf.get("thanhPhanHoSoQuetNId") or str(uuid.uuid4())
         ver_gcn = safe_int(tf.get("versionGiayChungNhan") or version_gcn, 11)
-
         is_gcn = la_giay_chung_nhan or (safe_int(loai_ho_so_quet, 1) == 1)
 
-        # Kiểm tra chế độ: Nếu HSQ rỗng (chưa có file hoặc hoSoQuetId == 0) -> Đẩy payload tạo mới
-        is_empty_or_new = (target_file is None) or (tp_id is None) or (ho_so_quet_id_int == 0)
-
-        if is_empty_or_new:
-            thong_tin_ho_so_id = safe_int(hoso.get("thongTinHoSoId") or lay_thong_tin_ho_so_id(detail, hoso))
-            ho_so_quet = {
-                "thongTinHoSoId": thong_tin_ho_so_id,
-                "TuiHoSo": None,
-                "tuiHoSoId": 0,
-                "hoSoQuetId": 0,
-            }
-            info_ho_so_quet = {
+        def info_tao_moi() -> dict[str, Any]:
+            return {
                 "loaiHoSoQuet": safe_int(loai_ho_so_quet, 1),
                 "laGiayToVeNguonGoc": True,
                 "giayChungNhanId": str(giay_chung_nhan_id).strip() if giay_chung_nhan_id else "",
@@ -994,6 +1109,20 @@ class MplisClient:
                 "__id": str(uuid.uuid4()),
                 "files": None,
             }
+
+        # items: [(infoHoSoQuet, có đính kèm file không)] theo đúng thứ tự gửi
+        items: list[tuple[dict[str, Any], bool]] = []
+
+        if ho_so_quet_id_int == 0 or not nodes:
+            # HSQ rỗng: không có thành phần nào để mất → payload tạo mới.
+            thong_tin_ho_so_id = safe_int(hoso.get("thongTinHoSoId") or lay_thong_tin_ho_so_id(detail, hoso))
+            ho_so_quet = {
+                "thongTinHoSoId": thong_tin_ho_so_id,
+                "TuiHoSo": None,
+                "tuiHoSoId": 0,
+                "hoSoQuetId": 0,
+            }
+            items.append((info_tao_moi(), True))
         else:
             ho_so_quet = {
                 "hoSoQuetId":       ho_so_quet_id_int,
@@ -1001,7 +1130,7 @@ class MplisClient:
                 "tinhHinhDangKyId": safe_int(hoso.get("tinhHinhDangKyId")),
                 "bienDongId":       safe_int(hoso.get("bienDongId") or bien_dong_id),
                 "xaId":             safe_int(hoso.get("xaId")),
-                "CreatedDate":      hoso.get("CreatedDate") or now_iso_z(),
+                "CreatedDate":      dotnet_date_to_iso(hoso.get("CreatedDate")) or now_iso_z(),
                 "ModifiedDate":     now_iso_z(),
                 "Id":               str(hoso.get("Id") or uuid.uuid4()),
                 "Title":            str(hoso.get("Title") or ho_so_quet_id_int),
@@ -1013,45 +1142,58 @@ class MplisClient:
                 "tuiHoSoId":        safe_int(hoso.get("tuiHoSoId"), 0),
             }
 
-            info_ho_so_quet = {
-                "nodeId":               "",
-                "deleteId":             None,
-                "moTa":                 mo_ta_moi,
-                "tenGiayTo":            None,
-                "trichYeu":             None,
-                "isOldFile":            False,
-                "laGiayToVeNguonGoc":   True if is_gcn else False,
-                "laGiayChungNhan":      is_gcn,
-                "giayChungNhanId":      gcn_id_int,
-                "workflowNodeId":       "",
-                "versionGiayChungNhan": ver_gcn,
-                "loaiHoSoQuet":         safe_int(loai_ho_so_quet, 1 if is_gcn else 2),
-                "daKySo":               False,
-                "duongDan":             None,
-                "duLieu":               None,
-                "GiayChungNhan":        None,
-                "hoSoQuetId":           ho_so_quet_id_int,
-                "thanhPhanHoSoQuetNId": tp_nid,
-                "thanhPhanHoSoQuetId":  tp_id,
-                "_id":                  1,
-                "files":                None,
-                "__id":                 tf.get("__id") or str(uuid.uuid4()),
-            }
+            da_thay = False
+            for node in nodes:
+                n = copy.deepcopy(node)
+                n["files"] = None
+                if target_file is not None and la_cung_thanh_phan(node, target_file):
+                    n.update({
+                        "nodeId":               "",
+                        "deleteId":             None,
+                        "isOldFile":            False,
+                        "moTa":                 mo_ta_moi,
+                        "laGiayToVeNguonGoc":   True if is_gcn else False,
+                        "laGiayChungNhan":      is_gcn,
+                        "versionGiayChungNhan": ver_gcn,
+                        "loaiHoSoQuet":         safe_int(loai_ho_so_quet, 1 if is_gcn else 2),
+                        "daKySo":               False,
+                        "hoSoQuetId":           ho_so_quet_id_int,
+                        "__id":                 str(uuid.uuid4()),
+                    })
+                    if gcn_id_int:
+                        n["giayChungNhanId"] = gcn_id_int
+                    items.append((n, True))
+                    da_thay = True
+                else:
+                    items.append((n, False))
+
+            if target_file is not None and not da_thay:
+                raise RuntimeError(
+                    f"Không tìm thấy thành phần cần thay trong HSQ {ho_so_quet_id_int} → không gửi để tránh ghi nhầm."
+                )
+            if target_file is None:
+                items.append((info_tao_moi(), True))
 
         data = {
             "hoSoQuet":         json.dumps(ho_so_quet, ensure_ascii=False),
-            "infoHoSoQuet_1":   json.dumps(info_ho_so_quet, ensure_ascii=False),
-            "count":            "1",
+            "count":            str(len(items)),
             "isLuuKhoHoSoQuet": "false",
         }
+        for i, (info, _) in enumerate(items, start=1):
+            data[f"infoHoSoQuet_{i}"] = json.dumps(info, ensure_ascii=False)
 
         headers = dict(session.headers)
         headers.pop("Content-Type", None)
 
         with open(file_path, "rb") as f:
-            files = {"fileHoSoQuet_1": (os.path.basename(file_path), f, "application/pdf")}
+            files = {
+                f"fileHoSoQuet_{i}": (os.path.basename(file_path), f, "application/pdf")
+                for i, (_, co_file) in enumerate(items, start=1)
+                if co_file
+            }
             response = session.post(
-                URL_UPDATE_HOSOQUET, data=data, files=files, headers=headers, timeout=TIMEOUT
+                URL_UPDATE_HOSOQUET, data=data, files=files, headers=headers, timeout=TIMEOUT,
+                allow_redirects=False,
             )
 
         result = self._response_json(response, "UpdateHoSoQuetExistFile (upload)")
@@ -1130,7 +1272,9 @@ class MplisClient:
         headers = dict(session.headers)
         headers.pop("Content-Type", None)
 
-        response = session.post(URL_UPDATE_HOSOQUET, data=data, headers=headers, timeout=TIMEOUT)
+        response = session.post(
+            URL_UPDATE_HOSOQUET, data=data, headers=headers, timeout=TIMEOUT, allow_redirects=False
+        )
         result = self._response_json(response, "UpdateHoSoQuetExistFile (metadata)")
 
         if not isinstance(result, dict) or not result.get("success"):
@@ -1178,6 +1322,8 @@ class MplisClient:
 
             try:
                 js = self._response_json(response, "UpdateThongTinDangKy")
+            except HetPhien:
+                raise
             except Exception as exc:
                 last_error = str(exc)
                 continue
@@ -1344,30 +1490,27 @@ def tim_hoso_de_cap_nhat(
             if "CHUACOGIAY" in mo_ta and (not f_gid or f_gid == target_gcn_id):
                 return {"hoso": hoso, "file": f, "khop": "chuacogiay"}
 
-    # Mức 4: Tìm file tự do chưa gắn với bất kỳ GCN nào (giayChungNhanId rỗng và laGiayChungNhan False)
+    # Mức 4: File tự do chưa gắn GCN nào, và CHƯA phân loại hoặc loại GCN (1).
+    # Không lấy file đã là Giấy tờ (0) / Đơn đăng ký (2) / Thông báo (3) để tránh đè nhầm.
     for hoso in list_ho_so_quet:
         if not isinstance(hoso, dict):
             continue
-        wrapper = hoso.get("ListFileHoSoQuet") or {}
-        files = wrapper.get("ListFileHoSoQuet") or []
-        for f in files:
+        for f in cac_node_hoso(hoso):
             f_gid = safe_int(f.get("giayChungNhanId"))
             is_gcn = f.get("laGiayChungNhan") is True
-            if not f_gid and not is_gcn:
+            loai = f.get("loaiHoSoQuet")
+            chua_phan_loai_hoac_gcn = loai in (None, "") or safe_int(loai, -1) == 1
+            if not f_gid and not is_gcn and chua_phan_loai_hoac_gcn:
                 return {"hoso": hoso, "file": f, "khop": "file_tu_do"}
 
-    # Mức 5: Nếu đơn chỉ có 1 GCN duy nhất và có file trong HSQ, lấy file GCN hoặc file đầu tiên
+    # Mức 5: Đơn chỉ có 1 GCN duy nhất → lấy file đang là GCN (không lấy "file đầu tiên" bất kỳ).
     if not target_gcn or (len(detail.get("ListGiayChungNhan") or []) <= 1):
         for hoso in list_ho_so_quet:
             if not isinstance(hoso, dict):
                 continue
-            wrapper = hoso.get("ListFileHoSoQuet") or {}
-            files = wrapper.get("ListFileHoSoQuet") or []
-            for f in files:
-                if f.get("laGiayChungNhan") is True:
+            for f in cac_node_hoso(hoso):
+                if f.get("laGiayChungNhan") is True or safe_int(f.get("loaiHoSoQuet"), -1) == 1:
                     return {"hoso": hoso, "file": f, "khop": "gcn_duy_nhat"}
-            if files:
-                return {"hoso": hoso, "file": files[0], "khop": "file_dau_tien"}
 
     # Mức 6: Tất cả file hiện có đã thuộc về GCN khác, hoặc HSQ chưa có file:
     # Trả về hoso phù hợp với file = None để upload thành phần file mới cho GCN này
@@ -1451,6 +1594,8 @@ def xu_ly_mot_don(
 
     try:
         detail = client.lay_chi_tiet_don(tinh_hinh_dang_ky_id)
+    except HetPhien as exc:
+        raise HetPhien(str(exc), ket_qua=result) from exc
     except Exception as exc:
         result["ghi_chu"] = f"Lấy chi tiết đơn lỗi: {rut_gon_text(exc)}"
         return result
@@ -1549,6 +1694,8 @@ def xu_ly_mot_don(
         return result
 
     la_gcn = (safe_int(loai_ho_so_quet, 2) == 1 or bool(target_gcn_id))
+    hsq_id_int = safe_int(hoso.get("hoSoQuetId") or hoso.get("Title"))
+    so_tp_truoc = len(cac_node_hoso(hoso))
 
     try:
         if day_hsq:
@@ -1580,14 +1727,45 @@ def xu_ly_mot_don(
                 version_gcn=target_ver_gcn,
                 bien_dong_id=bien_dong_id,
             )
+    except HetPhien as exc:
+        raise HetPhien(f"HSQ chưa được cập nhật. {exc}", ket_qua=result) from exc
     except Exception as exc:
         result["ghi_chu"] = f"Update HSQ lỗi: {rut_gon_text(exc)}"
         return result
+
+    # Kiểm tra lại: HSQ đã có file thì số thành phần không được giảm.
+    if hsq_id_int and so_tp_truoc:
+        try:
+            detail_sau = client.lay_chi_tiet_don(tinh_hinh_dang_ky_id) or {}
+        except HetPhien as exc:
+            raise HetPhien(
+                f"Update HSQ OK nhưng hết phiên khi đọc lại để kiểm tra — cần kiểm tra tay đơn này. {exc}",
+                ket_qua=result,
+            ) from exc
+        except Exception as exc:
+            result["ghi_chu"] = f"Update HSQ OK nhưng không đọc lại được đơn để kiểm tra: {rut_gon_text(exc)}"
+            return result
+        hoso_sau = next(
+            (h for h in detail_sau.get("ListHoSoQuet") or []
+             if isinstance(h, dict) and safe_int(h.get("hoSoQuetId")) == hsq_id_int),
+            None,
+        )
+        so_tp_sau = len(cac_node_hoso(hoso_sau))
+        if so_tp_sau < so_tp_truoc:
+            raise HsqBiGiamThanhPhan(
+                f"HSQ {hsq_id_int} (đơn {tinh_hinh_dang_ky_id}) giảm từ {so_tp_truoc} còn {so_tp_sau} "
+                "thành phần sau khi đẩy → DỪNG TOÀN BỘ."
+            )
 
     if ngay_dang_ky_lan_dau or chu_id:
         try:
             payload = build_payload_update_ttdk(detail, ngay_dang_ky_lan_dau, chu_id=chu_id)
             client.api_update_thong_tin_dang_ky(payload, debug_key=str(tinh_hinh_dang_ky_id))
+        except HetPhien as exc:
+            raise HetPhien(
+                f"Update HSQ OK nhưng hết phiên khi cập nhật TTĐK/chủ — cần chạy lại phần TTĐK. {exc}",
+                ket_qua=result,
+            ) from exc
         except Exception as exc:
             result["ghi_chu"] = f"Update HSQ OK nhưng UpdateThongTinDangKy lỗi: {rut_gon_text(exc)}"
             return result
@@ -2124,6 +2302,8 @@ class App:
 
         try:
             registrations = self.client.tim_tat_ca_don(xa_id=xa_id, so_to=so_to, so_thua=so_thua)
+        except HetPhien:
+            raise
         except Exception as exc:
             self.log(f"   ❌ Lỗi tra cứu: {exc}")
             return [
@@ -2270,16 +2450,34 @@ class App:
                         f"Excel dòng {excel_row}: tờ {representative['soto']}, thửa {representative['sothua']} ---"
                     )
 
-                master_results = self._xu_ly_1_row(
-                    xa_id=xa_id,
-                    row=representative,
-                    day_hsq=day_hsq,
-                    chu_id=chu_id,
-                    loai_ho_so_quet=loai_ho_so_quet,
-                    folder_upload=folder_upload,
-                    ngay_dang_ky_lan_dau=ngay_dang_ky_lan_dau,
-                    thay_moi_gcn=thay_moi_gcn,
-                )
+                try:
+                    master_results = self._xu_ly_1_row(
+                        xa_id=xa_id,
+                        row=representative,
+                        day_hsq=day_hsq,
+                        chu_id=chu_id,
+                        loai_ho_so_quet=loai_ho_so_quet,
+                        folder_upload=folder_upload,
+                        ngay_dang_ky_lan_dau=ngay_dang_ky_lan_dau,
+                        thay_moi_gcn=thay_moi_gcn,
+                    )
+                except (HetPhien, HsqBiGiamThanhPhan) as exc:
+                    mac_dinh = {
+                        "soto": representative.get("soto", ""),
+                        "sothua": representative.get("sothua", ""),
+                        "tenfile": representative.get("tenfile", ""),
+                        "sogcn": representative.get("sogcn", ""),
+                        "tinhhinhdangkyid": representative.get("id_don", ""),
+                    }
+                    if isinstance(exc, HetPhien):
+                        dong = dong_ket_qua_het_phien(exc, mac_dinh)
+                    else:
+                        dong = {**mac_dinh, "trang_thai": "Lỗi",
+                                "ghi_chu": f"MPLIS giảm thành phần HSQ — ĐÃ DỪNG: {exc}"}
+                    writer.append_result(dong)
+                    loi += 1
+                    total_results += 1
+                    raise
 
                 for r in master_results:
                     writer.append_result(r)
@@ -2340,6 +2538,16 @@ class App:
                 "Hãy đóng file rồi chạy lại."
             )
             self.set_status("Lỗi lưu file kết quả")
+
+        except HetPhien as exc:
+            self.log(f"❌ {exc}")
+            self.log("⛔ HẾT PHIÊN — đã dừng. Đăng nhập lại / lấy session mới rồi chạy tiếp các dòng chưa xử lý.")
+            self.set_status("Hết phiên đăng nhập — đã dừng")
+            try:
+                writer.save()
+                self.log("💾 Đã lưu phần kết quả đang có.")
+            except Exception as save_exc:
+                self.log(f"❌ Không lưu được kết quả dở dang: {save_exc}")
 
         except Exception as exc:
             self.log(f"❌ Lỗi chương trình: {exc}")

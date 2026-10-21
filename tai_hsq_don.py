@@ -38,6 +38,7 @@ import time
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
+import requests
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
@@ -431,10 +432,24 @@ class Downloader:
         headers = {"Accept": "*/*"}
         if body and ctype:
             headers["Content-Type"] = ctype
-        r = self.session.request(
-            method, url, data=body.encode("utf-8") if body else None,
-            headers=headers, timeout=core.TIMEOUT, allow_redirects=False,
-        )
+        # Tải file là request đọc → retry khi lỗi mạng / 5xx (backoff tăng dần).
+        for lan in range(core.SO_LAN_THU_LAI_DOC + 1):
+            try:
+                r = self.session.request(
+                    method, url, data=body.encode("utf-8") if body else None,
+                    headers=headers, timeout=core.TIMEOUT, allow_redirects=False,
+                )
+            except (requests.ConnectionError, requests.Timeout) as exc:
+                if lan >= core.SO_LAN_THU_LAI_DOC:
+                    raise
+                loi = f"lỗi mạng: {core.rut_gon_text(exc, 120)}"
+            else:
+                if r.status_code < 500 or lan >= core.SO_LAN_THU_LAI_DOC:
+                    break
+                loi = f"HTTP {r.status_code}"
+            cho = core.CHO_THU_LAI_GIAY[min(lan, len(core.CHO_THU_LAI_GIAY) - 1)]
+            log(f"   ⚠ Tải file {loi} — thử lại sau {cho}s ({lan + 1}/{core.SO_LAN_THU_LAI_DOC})")
+            time.sleep(cho)
         return {
             "status": r.status_code,
             "ctype": r.headers.get("Content-Type", ""),
@@ -452,6 +467,8 @@ class Downloader:
         for mau in ds_mau:
             try:
                 ket_qua = self._tai_theo_mau(mau, f)
+            except core.HetPhien:
+                raise  # hết phiên thì thử mẫu khác cũng vô ích
             except Exception as exc:
                 loi_cuoi = exc
                 continue
@@ -475,8 +492,8 @@ class Downloader:
         res = self._gui(url, mau.get("method") or "GET", body, mau.get("content_type") or "")
         data = res["data"]
         ctype = (res.get("ctype") or "").lower()
-        if res.get("status") in {301, 302, 303, 307, 308}:
-            raise RuntimeError(f"Bị chuyển hướng (HTTP {res.get('status')}) — token/cookie có thể đã hết hạn.")
+        if res.get("status") in {301, 302, 303, 307, 308, 401}:
+            raise core.HetPhien(f"Tải file bị chuyển hướng (HTTP {res.get('status')}) — phiên đăng nhập đã hết hạn.")
         if res.get("status") != 200 or not data or "html" in ctype:
             raise RuntimeError(f"HTTP {res.get('status')} {ctype}: {data[:150]!r}")
 
@@ -581,6 +598,11 @@ def xu_ly_don(
         mo_ta = f.get("moTa") or f.get("tenGiayTo") or f"file_{i}"
         try:
             data, ten_server = downloader.tai(f)
+        except core.HetPhien as exc:
+            # Giữ lại các file đã tải của đơn này rồi dừng cả lượt.
+            kq["loi"].append(f"{mo_ta}: {exc}")
+            kq["dong"].append(dong_excel_tu_file(id_don, f, "", "Lỗi", f"HẾT PHIÊN — ĐÃ DỪNG: {exc}"))
+            raise core.HetPhien(str(exc), ket_qua=kq) from exc
         except Exception as exc:
             kq["loi"].append(f"{mo_ta}: {exc}")
             kq["dong"].append(dong_excel_tu_file(id_don, f, "", "Lỗi", core.rut_gon_text(exc, 300)))
@@ -597,6 +619,14 @@ def xu_ly_don(
         time.sleep(core.REQUEST_DELAY_SECONDS)
 
     return kq
+
+
+def kq_het_phien(id_don: int, exc: "core.HetPhien") -> dict[str, Any]:
+    """kq của đơn đang xử lý khi hết phiên (giữ các file đã tải nếu có)."""
+    if isinstance(exc.ket_qua, dict) and "dong" in exc.ket_qua:
+        return exc.ket_qua
+    return {"id_don": id_don, "so_file": 0, "da_tai": 0, "loi": [str(exc)],
+            "dong": [{"madon": id_don, "trang_thai_tai": "Lỗi", "ghi_chu_tai": f"HẾT PHIÊN — ĐÃ DỪNG: {exc}"}]}
 
 
 def doc_id_tu_excel(path: str) -> list[str]:
@@ -687,6 +717,12 @@ def main() -> None:
             da_co_mau = downloader.mau is not None
             try:
                 kq = xu_ly_don(client, downloader, id_don, out_dir, args.chi_kiem_tra)
+            except core.HetPhien as exc:
+                log(f"❌ {exc}")
+                log("⛔ HẾT PHIÊN — đã dừng. Đăng nhập lại rồi chạy tiếp các đơn chưa tải.")
+                tong.append(kq_het_phien(id_don, exc))
+                ghi_excel_ket_qua(excel_kq, [d for k in tong for d in k["dong"]])
+                break
             except Exception as exc:
                 log(f"❌ Đơn {id_don}: {core.rut_gon_text(exc, 300)}")
                 kq = {"id_don": id_don, "so_file": 0, "da_tai": 0, "loi": [str(exc)],

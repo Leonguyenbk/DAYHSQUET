@@ -189,7 +189,7 @@ def chay(client, ids: list[int], out_path: str, nen_dung=lambda: False, bao_tien
                     log(f"     {d['vitri']:>2}. [{d['loaihosoquet']}] {d['mota'] or '(trống)'}")
             if n % 20 == 0:
                 _ghi_an_toan(out_path, rows)  # lưu dần, lỡ dừng giữa chừng vẫn có dữ liệu
-            time.sleep(core.REQUEST_DELAY_SECONDS)
+            core.nghi_giua_don()
     finally:
         if rows:
             _ghi_an_toan(out_path, rows)

@@ -117,10 +117,9 @@ def uu_tien_file(f: dict[str, Any]) -> int:
     return 2
 
 
-def tai_mot_file(downloader: thd.Downloader, f: dict[str, Any], vi_tri: int, thu_muc: str,
-                 dung_file_da_tai: bool) -> str | None:
-    """Tải 1 file HSQ về thu_muc/'NN_<mô tả>.<đuôi>' → đường dẫn PDF (không phải PDF → None).
-    Lỗi tải → ném lỗi; hết phiên → core.HetPhien."""
+def _tai_ve(downloader: thd.Downloader, f: dict[str, Any], vi_tri: int, thu_muc: str,
+            dung_file_da_tai: bool) -> str:
+    """Tải 1 file HSQ về thu_muc/'NN_<mô tả>.<đuôi>' → đường dẫn (đuôi theo nội dung). Hết phiên → core.HetPhien."""
     mo_ta = f.get("moTa") or f.get("tenGiayTo") or f"file_{vi_tri}"
     ten = f"{vi_tri:02d}_{thd.ten_file_an_toan(mo_ta)}"
     os.makedirs(thu_muc, exist_ok=True)
@@ -128,15 +127,171 @@ def tai_mot_file(downloader: thd.Downloader, f: dict[str, Any], vi_tri: int, thu
     if dung_file_da_tai and os.path.isfile(co_san):
         return co_san
     data, ten_server = downloader.tai(f)
-    duoi = thd.doan_duoi_file(data, ten_server)
-    duong_dan = os.path.join(thu_muc, f"{ten}{duoi}")
+    duong_dan = os.path.join(thu_muc, f"{ten}{thd.doan_duoi_file(data, ten_server)}")
     with open(duong_dan, "wb") as fp:
         fp.write(data)
     time.sleep(core.REQUEST_DELAY_SECONDS)
-    if duoi.lower() != ".pdf":
+    return duong_dan
+
+
+def _chi_lay_pdf(duong_dan: str) -> str | None:
+    if os.path.splitext(duong_dan)[1].lower() != ".pdf":
         log(f"   ⚠ {os.path.basename(duong_dan)} không phải PDF — AI không đọc")
         return None
     return duong_dan
+
+
+def tai_mot_file(downloader: thd.Downloader, f: dict[str, Any], vi_tri: int, thu_muc: str,
+                 dung_file_da_tai: bool) -> str | None:
+    """Tải 1 file HSQ → đường dẫn PDF (không phải PDF → None). Lỗi tải → ném lỗi; hết phiên → core.HetPhien."""
+    return _chi_lay_pdf(_tai_ve(downloader, f, vi_tri, thu_muc, dung_file_da_tai))
+
+
+# ============================ TẢI TRƯỚC (song song với lúc chờ AI) ============================
+
+SO_FILE_TAI_TRUOC = 2  # đơn sắp tới: tải trước vài file đầu — đơn dừng sớm thì không phí tải cả HSQ
+SO_DON_TAI_TRUOC = 2  # số đơn kế tiếp chuẩn bị trước (đơn chưa có GCN không tải file nào)
+
+
+class TaiTruoc:
+    """
+    1 luồng nền tải TUẦN TỰ theo độ ưu tiên: file đơn đang xử lý trước, rồi chi tiết + vài file đầu của đơn kế
+    tiếp → mạng chạy trong lúc luồng chính chờ AI. Mọi lệnh tải đi qua luồng nền (Downloader chỉ 1 luồng dùng);
+    lệnh MPLIS của cả 2 luồng giữ self.khoa → không gửi chồng nhau trên cùng session.
+    Log phát sinh trong luồng nền (thử lại, endpoint...) được giữ lại, in ra khi luồng chính dùng kết quả
+    → nhật ký vẫn liền mạch theo từng đơn.
+    """
+
+    def __init__(self, client, downloader: thd.Downloader, out_dir: str, dung_file_da_tai: bool) -> None:
+        import queue
+        import threading
+
+        self.client, self.downloader = client, downloader
+        self.out_dir, self.dung_file_da_tai = out_dir, dung_file_da_tai
+        self.khoa = threading.RLock()
+        self._khoa_viec = threading.Lock()
+        self._hang: queue.PriorityQueue = queue.PriorityQueue()
+        self._stt = 0
+        self._thu_tu_don: dict[int, int] = {}
+        self._viec: dict[tuple, Any] = {}  # ("ct", id) | ("f", id, vi_tri) → Future
+        self._buf: list[str] = []
+        self._log_goc = thd.log
+        thd.log = self._log  # Downloader gọi thd.log lúc chạy → bắt được log của luồng nền
+        self._luong = threading.Thread(target=self._chay, name="tai_truoc", daemon=True)
+        self._luong.start()
+
+    # ---- luồng nền
+    def _log(self, msg: str) -> None:
+        import threading
+
+        if threading.current_thread() is self._luong:
+            self._buf.append(msg)
+        else:
+            self._log_goc(msg)
+
+    def _chay(self) -> None:
+        while True:
+            _, _, fut, ham = self._hang.get()
+            if fut is None:
+                return
+            if not fut.set_running_or_notify_cancel():
+                continue
+            self._buf = []
+            try:
+                kq = ham()
+            except BaseException as exc:  # noqa: BLE001 — trả về luồng chính
+                exc.log_nen = self._buf  # type: ignore[attr-defined]
+                fut.set_exception(exc)
+            else:
+                fut.set_result((kq, self._buf))
+
+    def _xep(self, khoa: tuple, uu_tien: tuple, ham: Callable[[], Any]):
+        from concurrent.futures import Future
+
+        with self._khoa_viec:
+            fut = self._viec.get(khoa)
+            if fut is not None and not fut.cancelled():
+                return fut
+            fut = Future()
+            self._viec[khoa] = fut
+            self._stt += 1
+            self._hang.put((uu_tien, self._stt, fut, ham))
+            return fut
+
+    def dang_ky(self, ids: list[int]) -> None:
+        """Thứ tự đơn trong loạt = độ ưu tiên tải (đơn trước tải trước)."""
+        with self._khoa_viec:
+            for id_don in ids:
+                self._thu_tu_don.setdefault(id_don, len(self._thu_tu_don))
+
+    def _uu_tien_don(self, id_don: int) -> int:
+        with self._khoa_viec:
+            return self._thu_tu_don.setdefault(id_don, len(self._thu_tu_don))
+
+    def _ket_qua(self, fut) -> Any:
+        try:
+            kq, buf = fut.result()
+        except BaseException as exc:
+            for msg in getattr(exc, "log_nen", []):
+                log(msg)
+            raise
+        for msg in buf:
+            log(msg)
+        return kq
+
+    def _tai_chi_tiet(self, id_don: int) -> dict | None:
+        with self.khoa:
+            return self.client.lay_chi_tiet_don(id_don)
+
+    def _tai_file(self, id_don: int, vi_tri: int, f: dict[str, Any]) -> str:
+        thu_muc = os.path.join(self.out_dir, THU_MUC_HSQ, str(id_don))
+        with self.khoa:
+            return _tai_ve(self.downloader, f, vi_tri, thu_muc, self.dung_file_da_tai)
+
+    # ---- luồng chính
+    def chi_tiet(self, id_don: int) -> dict | None:
+        return self._ket_qua(self._xep(("ct", id_don), (self._uu_tien_don(id_don), 0),
+                                       lambda: self._tai_chi_tiet(id_don)))
+
+    def dat_truoc_file(self, id_don: int, ds: list[tuple[int, dict[str, Any]]], bat_dau: int = 0) -> None:
+        """Xếp hàng tải các file (vị trí, file); ds là đoạn thứ tự xử lý của đơn bắt đầu từ chỉ số bat_dau."""
+        don = self._uu_tien_don(id_don)
+        for k, (vi_tri, f) in enumerate(ds, bat_dau):
+            self._xep(("f", id_don, vi_tri), (don, 1, k), lambda v=vi_tri, f_=f: self._tai_file(id_don, v, f_))
+
+    def file(self, id_don: int, vi_tri: int, f: dict[str, Any]) -> str:
+        self.dat_truoc_file(id_don, [(vi_tri, f)])
+        with self._khoa_viec:
+            fut = self._viec[("f", id_don, vi_tri)]
+        return self._ket_qua(fut)
+
+    def chuan_bi_don(self, id_don: int) -> None:
+        """Đơn kế tiếp: tải chi tiết, đơn có GCN thì tải trước vài file đầu (theo uu_tien_file)."""
+        don = self._uu_tien_don(id_don)
+
+        def lam() -> dict | None:
+            detail = self._tai_chi_tiet(id_don)
+            if detail and any(str(g.get("soPhatHanh") or "").strip() for g in bs.gcn_hien_hanh(detail)):
+                thu_tu = sorted(enumerate(thd.liet_ke_file_hsq(detail), 1), key=lambda x: uu_tien_file(x[1]))
+                self.dat_truoc_file(id_don, thu_tu[:SO_FILE_TAI_TRUOC])
+            return detail
+
+        self._xep(("ct", id_don), (don, 0), lam)
+
+    def huy_don(self, id_don: int) -> None:
+        """Đơn xong (dừng sớm) → bỏ các file đang xếp hàng chưa tải của đơn đó."""
+        with self._khoa_viec:
+            for khoa, fut in self._viec.items():
+                if khoa[0] == "f" and khoa[1] == id_don:
+                    fut.cancel()
+
+    def dong(self) -> None:
+        with self._khoa_viec:
+            for fut in self._viec.values():
+                fut.cancel()
+        self._hang.put(((-1,), 0, None, None))
+        self._luong.join(timeout=120)
+        thd.log = self._log_goc
 
 
 # ============================ AI GÁN TRANG → GCN ============================
@@ -618,16 +773,24 @@ def cap_nhat_loai_don(client, detail: dict[str, Any], id_don: int, chay_thu: boo
 def xu_ly_don(client, downloader: thd.Downloader, analyzer: GeminiAnalyzer, id_don: int, out_dir: str,
               cache: dict, usage: Usage, model: str = DEFAULT_MODEL, dung_file_da_tai: bool = False,
               nen_dung: Callable[[], bool] = lambda: False, loc_truoc: bool = True,
-              quet_het: bool = False, chay_thu: bool = True) -> list[dict[str, Any]]:
+              quet_het: bool = False, chay_thu: bool = True, tt: TaiTruoc | None = None) -> list[dict[str, Any]]:
     """
-    Trả các dòng Excel của đơn. Hết phiên → ném core.HetPhien.
+    Trả các dòng Excel của đơn. Hết phiên → ném core.HetPhien. tt: bộ tải trước dùng chung cả loạt (None → tạo
+    riêng cho đơn này).
     Đơn chưa có GCN: chỉ cap_nhat_loai_don — thành phần có chuỗi 'DON' → Đơn đăng ký + hồ sơ gốc (chay_thu:
     chỉ ghi kế hoạch, không ghi MPLIS); không tải, không gọi AI.
     Đơn có GCN: chỉ tách GCN (không ghi gì lên MPLIS) — file HSQ xử lý theo uu_tien_file, tải tới đâu đọc tới
     đó; mọi GCN của đơn đã có bản đúng chủ (đơn không có chủ: đã có bản) → dừng, không tải / không gọi AI các
     file còn lại (trừ khi quet_het).
     """
-    detail = client.lay_chi_tiet_don(id_don)
+    if tt is None:
+        tt = TaiTruoc(client, downloader, out_dir, dung_file_da_tai)
+        try:
+            return xu_ly_don(client, downloader, analyzer, id_don, out_dir, cache, usage, model, dung_file_da_tai,
+                             nen_dung, loc_truoc, quet_het, chay_thu, tt)
+        finally:
+            tt.dong()
+    detail = tt.chi_tiet(id_don)
     if detail is None:
         log(f"❌ Đơn {id_don}: không lấy được chi tiết")
         return [_dong(id_don, trang_thai="Lỗi", ghi_chu="Không lấy được chi tiết đơn")]
@@ -639,21 +802,23 @@ def xu_ly_don(client, downloader: thd.Downloader, analyzer: GeminiAnalyzer, id_d
     if not ds_gcn:
         log("   Đơn chưa có GCN → không phân tích GCN; cập nhật loại HSQ: thành phần có chuỗi 'DON' → Đơn đăng ký"
             " + hồ sơ gốc" + (" (CHẠY THỬ)" if chay_thu else ""))
-        return cap_nhat_loai_don(client, detail, id_don, chay_thu)
-    return _tach_gcn_don(downloader, analyzer, detail, ds_gcn, id_don, out_dir, cache, usage, model,
-                         dung_file_da_tai, nen_dung, loc_truoc, quet_het)
+        with tt.khoa:  # luồng tải nền không gửi gì trong lúc ghi MPLIS
+            return cap_nhat_loai_don(client, detail, id_don, chay_thu)
+    try:
+        return _tach_gcn_don(tt, analyzer, detail, ds_gcn, id_don, out_dir, cache, usage, model,
+                             nen_dung, loc_truoc, quet_het)
+    finally:
+        tt.huy_don(id_don)
 
 
-def _tach_gcn_don(downloader: thd.Downloader, analyzer: GeminiAnalyzer, detail: dict[str, Any],
+def _tach_gcn_don(tt: TaiTruoc, analyzer: GeminiAnalyzer, detail: dict[str, Any],
                   ds_gcn: list[dict[str, Any]], id_don: int, out_dir: str, cache: dict, usage: Usage, model: str,
-                  dung_file_da_tai: bool, nen_dung: Callable[[], bool], loc_truoc: bool,
-                  quet_het: bool) -> list[dict[str, Any]]:
+                  nen_dung: Callable[[], bool], loc_truoc: bool, quet_het: bool) -> list[dict[str, Any]]:
     """Bước tách GCN của xu_ly_don cho đơn có GCN hiện hành."""
     files = thd.liet_ke_file_hsq(detail)
     if not files:
         log("   ⚠ Đơn không có HSQ")
         return [_dong(id_don, g, trang_thai="Không thấy", ghi_chu="Đơn không có HSQ") for g in ds_gcn]
-    thu_muc_hsq = os.path.join(out_dir, THU_MUC_HSQ, str(id_don))
 
     ds_chu = chu_cua_don(detail)
     log(f"   Chủ sử dụng trong đơn: {', '.join(ds_chu) or '(không có)'}")
@@ -680,8 +845,9 @@ def _tach_gcn_don(downloader: thd.Downloader, analyzer: GeminiAnalyzer, detail: 
             loi.append(f"Bỏ qua {con_lai} file HSQ sau khi đã đủ GCN")
             break
         mo_ta = f.get("moTa") or f.get("tenGiayTo") or f"file_{vi_tri}"
+        tt.dat_truoc_file(id_don, thu_tu[n:n + 2], n)  # file kế tiếp tải trong lúc AI đọc file này
         try:
-            path = tai_mot_file(downloader, f, vi_tri, thu_muc_hsq, dung_file_da_tai)
+            path = _chi_lay_pdf(tt.file(id_don, vi_tri, f))
         except core.HetPhien:
             raise
         except Exception as exc:
@@ -803,15 +969,31 @@ def chay(client, ids: list[int], out_dir: str, api_key: str, model: str = DEFAUL
         save_cache(cache_path, cache)
 
     log(f"Tách GCN cho {len(ids)} đơn | model {model} → {out_dir}")
+    tt = TaiTruoc(client, downloader, out_dir, dung_file_da_tai)
+    try:
+        _chay_cac_don(client, downloader, analyzer, ids, out_dir, cache, usage, model, dung_file_da_tai, nen_dung,
+                      bao_tien_do, loc_truoc, quet_het, chay_thu, tt, rows, luu)
+    finally:
+        tt.dong()
+    bao_tien_do(len(ids), len(ids), "Xong")
+    _tong_ket(rows, out_dir, usage, excel)
+    return excel
+
+
+def _chay_cac_don(client, downloader, analyzer, ids, out_dir, cache, usage, model, dung_file_da_tai, nen_dung,
+                  bao_tien_do, loc_truoc, quet_het, chay_thu, tt: TaiTruoc, rows: list, luu: Callable[[], None]) -> None:
+    tt.dang_ky(ids)
     for n, id_don in enumerate(ids, 1):
         if nen_dung():
             log("⏹ Đã dừng theo yêu cầu.")
             break
         bao_tien_do(n - 1, len(ids), f"Đơn {id_don} ({n}/{len(ids)})")
         log(f"--- [{n}/{len(ids)}] Đơn {id_don} ---")
+        for id_sau in ids[n:n + SO_DON_TAI_TRUOC]:
+            tt.chuan_bi_don(id_sau)  # đơn kế tiếp tải nền trong lúc xử lý đơn này
         try:
             rows += xu_ly_don(client, downloader, analyzer, id_don, out_dir, cache, usage, model,
-                              dung_file_da_tai, nen_dung, loc_truoc, quet_het, chay_thu)
+                              dung_file_da_tai, nen_dung, loc_truoc, quet_het, chay_thu, tt)
         except core.HetPhien as exc:
             log(f"❌ {exc}")
             log("⛔ HẾT PHIÊN — đã dừng. Đăng nhập lại rồi chạy tiếp các đơn chưa xử lý.")
@@ -828,8 +1010,9 @@ def chay(client, ids: list[int], out_dir: str, api_key: str, model: str = DEFAUL
             log(f"❌ Đơn {id_don}: {core.rut_gon_text(exc, 300)}")
             rows.append(_dong(id_don, trang_thai="Lỗi", ghi_chu=core.rut_gon_text(exc, 300)))
         luu()
-    bao_tien_do(len(ids), len(ids), "Xong")
 
+
+def _tong_ket(rows: list[dict[str, Any]], out_dir: str, usage: Usage, excel: str) -> None:
     def dem(tt: str) -> int:
         return sum(r.get("trang_thai") == tt for r in rows)
 
@@ -853,7 +1036,6 @@ def chay(client, ids: list[int], out_dir: str, api_key: str, model: str = DEFAUL
     log(f"Chi phí Gemini ước tính: {usage.estimated_cost_usd:.4f} USD "
         f"({usage.input_tokens} token vào, {usage.output_tokens} token ra)")
     log(f"Excel kết quả: {excel}")
-    return excel
 
 
 def main() -> None:

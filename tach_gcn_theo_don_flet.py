@@ -74,6 +74,8 @@ class TachGcnTheoDonApp(DayHsqTheoMoTaApp):
                 "(có dấu hay không, viết dính cũng lấy: 'Đơn đăng ký', 'DONDANGKY') là loại Đơn đăng ký + hồ sơ "
                 "gốc (gửi đủ thành phần, không đổi file; kiểm tra lại sau khi gửi, MPLIS giảm thành phần → dừng "
                 "toàn bộ). Bật 'Chạy thử' thì chỉ ghi kế hoạch vào Excel. Đơn CÓ GCN không bị cập nhật loại.\n"
+                "• Trong lúc chờ AI đọc: luồng nền tải trước file kế tiếp + chi tiết và vài file đầu của 2 đơn sau "
+                "(đơn chưa có GCN không tải file). Nhật ký vẫn in lần lượt từng đơn.\n"
                 "• Kết quả AI lưu cache: chạy lại cùng file không tốn thêm phí.\n"
                 "• Thư mục GCN dùng ngay cho tool 'Đẩy HSQ theo mô tả + file -GCN'.\n"
                 "• Phần tách GCN chỉ ĐỌC MPLIS. Excel kết quả ghi vào thư mục kết quả."

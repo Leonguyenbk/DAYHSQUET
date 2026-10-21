@@ -152,6 +152,8 @@ class BoSungGcnApp(TaiHsqApp):
         except day.DungKhanCap as exc:
             thd.log(f"❌ {exc}")
             ket_thuc = "ĐÃ DỪNG KHẨN CẤP"
+        except core.HetPhien:
+            ket_thuc = "HẾT PHIÊN — đã dừng"  # đã log + ghi Excel trong bs.chay
         except Exception as exc:
             thd.log(f"❌ {core.rut_gon_text(exc, 300)}")
             ket_thuc = "Lỗi"

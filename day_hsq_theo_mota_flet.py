@@ -132,7 +132,7 @@ class DayHsqTheoMoTaApp(TaiHsqApp):
             self._append_log(f"Đơn {madon}: {len(pdfs)} file — " + ", ".join(os.path.basename(p) for p in pdfs[:6])
                              + (" ..." if len(pdfs) > 6 else ""))
         if khong_nhan:
-            self._append_log(f"Bỏ qua thư mục không bắt đầu bằng mã đơn: {', '.join(khong_nhan)}", "warn")
+            self._append_log(f"Bỏ qua thư mục có PDF nhưng không nằm trong thư mục mã đơn nào ({len(khong_nhan)}): {', '.join(khong_nhan[:10])}{' ...' if len(khong_nhan) > 10 else ''}", "warn")
         self._append_log(f"Tổng: {len(theo_don)} đơn | {sum(len(v) for v in theo_don.values())} file PDF", "title")
 
     def _start(self, chay_thu: bool) -> None:
