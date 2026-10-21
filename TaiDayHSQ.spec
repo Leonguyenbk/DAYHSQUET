@@ -1,12 +1,21 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
+import sys
+sys.path.insert(0, SPECPATH)
+from flet_client_bundle import datas_flet_client
+
+datas = collect_data_files("flet") + datas_flet_client()  # client đi kèm: máy khác không phải tải từ GitHub
+
+hiddenimports = ['selenium.webdriver.chrome.webdriver', 'selenium.webdriver.chrome.options', 'selenium.webdriver.chrome.service', 'selenium.webdriver.chromium.webdriver', 'selenium.webdriver.chromium.options', 'selenium.webdriver.chromium.service', 'selenium.webdriver.remote.webdriver', 'selenium.webdriver.common.keys', 'selenium.webdriver.common.by', 'selenium.webdriver.support.ui', 'selenium.webdriver.support.expected_conditions']
+hiddenimports += collect_submodules("openpyxl")
 
 a = Analysis(
     ['tai_hsq_don_flet.py'],
     pathex=[],
     binaries=[],
-    datas=[],
-    hiddenimports=['selenium.webdriver.chrome.webdriver', 'selenium.webdriver.chrome.options', 'selenium.webdriver.chrome.service', 'selenium.webdriver.chromium.webdriver', 'selenium.webdriver.chromium.options', 'selenium.webdriver.chromium.service', 'selenium.webdriver.remote.webdriver', 'selenium.webdriver.common.keys', 'selenium.webdriver.common.by', 'selenium.webdriver.support.ui', 'selenium.webdriver.support.expected_conditions'],
+    datas=datas,
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -35,6 +44,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    version='C:\\Users\\Admin\\AppData\\Local\\Temp\\8a93df33-2c1e-4ab8-97aa-94c71c57ddf9',
     icon=['app.ico'],
 )
