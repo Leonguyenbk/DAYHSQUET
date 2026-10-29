@@ -99,7 +99,8 @@ chứng nhận quyền sử dụng đất. Bản scan có thể TRẢI 2 MẶT t
 Hãy đọc toàn bộ các trang và trích:
 
 - certificate_serial: SỐ GIẤY CHỨNG NHẬN / số phát hành / mã phôi in trên
-  GCN, thường có dạng hai chữ cái và sáu chữ số, ví dụ AA 123456. Đây là số
+  GCN, thường có dạng hai chữ cái và sáu chữ số, ví dụ AA 123456 (GCN mẫu A4 mới:
+  AA và tám chữ số, ví dụ AA 01234567). Đây là số
   dùng đặt tên file. Không lấy "Số vào sổ cấp GCN", số thửa, số tờ bản đồ,
   mã vạch hoặc số in ở trang sơ đồ.
 - registration_number: chỉ lấy nội dung tại nhãn "Số vào sổ cấp GCN" (mẫu cũ:
@@ -174,7 +175,8 @@ GCN nào trong danh sách:
   khác...); chuỗi rỗng nếu không phải trang GCN (đơn, hợp đồng, quyết định, trích lục,
   biên bản, bản vẽ, CCCD, giấy tờ khác — kể cả khi có nhắc tới số GCN).
 - Số phát hành (mã phôi, dạng 2 chữ cái + 6 chữ số, vd AA 123456) in ở trang đầu của
-  quyển GCN. Các trang sơ đồ / trang thay đổi thường không có số: chúng thuộc GCN có
+  quyển GCN. GCN mẫu A4 mới có số AA + 8 chữ số (vd AA 01234567), gồm 1 tờ A4 2 mặt: mặt
+  trước có số phát hành, mặt sau (sơ đồ thửa đất / những thay đổi) thuộc cùng GCN đó. Các trang sơ đồ / trang thay đổi thường không có số: chúng thuộc GCN có
   trang đầu đứng ngay trước trong cùng file, trừ khi số vào sổ, số thửa hoặc tên người
   trên trang cho thấy là GCN khác. Đối chiếu thêm số vào sổ trong danh sách.
 - Mỗi trang chỉ thuộc tối đa một GCN. Không chắc thì để rỗng, không đoán.
@@ -191,6 +193,112 @@ GCN nào trong danh sách:
 {previous}
 Trả đúng một phần tử cho mỗi ảnh, giữ nguyên số i ghi trước ảnh. Chỉ xuất JSON theo schema.
 """
+
+
+APPLICATION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "pages": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "i": {"type": "integer"},
+                    "is_application": {"type": "boolean"},
+                    "starts_copy": {"type": "boolean"},
+                    "title": {"type": "string"},
+                    "reason": {"type": "string"},
+                },
+                "required": ["i", "is_application", "starts_copy", "title", "reason"],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["pages"],
+    "additionalProperties": False,
+}
+
+APPLICATION_PROMPT = """Các ảnh sau là các trang của hồ sơ quét một đơn đăng ký đất đai.
+Với MỖI ảnh, xác định trang đó có thuộc ĐƠN ĐĂNG KÝ của người sử dụng đất không:
+"Đơn đăng ký đất đai, tài sản gắn liền với đất", "Đơn đề nghị cấp giấy chứng nhận",
+"Đơn đăng ký, cấp giấy chứng nhận...", "Đơn đăng ký biến động..." (mẫu cũ hay mới đều tính).
+
+- is_application: true cho trang đầu của đơn (có tiêu đề "ĐƠN ...") VÀ các trang tiếp theo
+  của cùng mẫu đơn (phần kê khai thửa đất, tài sản, giấy tờ, cam đoan, chữ ký người viết đơn,
+  phần xác nhận / ý kiến của UBND xã, của cơ quan đăng ký đất đai ghi trên mẫu đơn).
+  false cho: GCN, hợp đồng, quyết định, tờ khai thuế, thông báo, biên bản, trích lục, bản vẽ,
+  CCCD, sổ hộ khẩu, giấy uỷ quyền, phiếu lấy ý kiến, danh sách, bìa hồ sơ, đơn từ khác không
+  phải đơn đăng ký đất đai (đơn xin xác nhận, đơn khiếu nại...).
+- starts_copy: true nếu ảnh mở đầu MỘT BẢN đơn mới (trang có tiêu đề đơn); false nếu là trang
+  tiếp theo của đơn ở ảnh liền trước, hoặc không phải trang đơn.
+- title: tiêu đề ngắn đọc được (rỗng nếu không có).
+- reason: lý do ngắn bằng tiếng Việt.
+{previous}
+Trả đúng một phần tử cho mỗi ảnh, giữ nguyên số i ghi trước ảnh. Chỉ xuất JSON theo schema.
+"""
+
+
+FIELDS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "fields": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "key": {"type": "string"},
+                    "value": {"type": "string"},
+                    "page": {"type": "integer"},
+                    "confidence": {"type": "string", "enum": ["cao", "trung bình", "thấp"]},
+                    "evidence": {"type": "string"},
+                },
+                "required": ["key", "value", "page", "confidence", "evidence"],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["fields"],
+    "additionalProperties": False,
+}
+
+FIELDS_PROMPT = """Các ảnh sau là các trang hồ sơ quét (giấy chứng nhận quyền sử dụng đất,
+đơn đăng ký...) của MỘT đơn đăng ký đất đai. Hệ thống đang thiếu các thông tin dưới đây;
+hãy đọc chúng trên ảnh:
+
+{fields}
+{note}
+Quy tắc:
+- Mỗi khoá trả đúng một phần tử. value là giá trị đọc được, ghi đúng như trên giấy (ngày
+  theo dạng DD/MM/YYYY; diện tích chỉ ghi số m², dấu chấm thập phân; năm sinh 4 chữ số).
+- Chỉ lấy thông tin của ĐÚNG đối tượng được mô tả (đúng người, đúng thửa, đúng GCN). Trên GCN
+  đã có biến động ở trang 4 thì ưu tiên thông tin mới nhất.
+- Không thấy trên ảnh thì value rỗng, page = 0. Không suy đoán, TRỪ các khoá ghi "(suy luận)":
+  khi đó được suy ra từ mẫu giấy / tiêu đề / ghi chú trên ảnh và để confidence tối đa "trung bình".
+- page: số i của ảnh có thông tin. evidence: trích nguyên văn ngắn đoạn chữ trên ảnh làm căn cứ.
+- confidence: "cao" khi đọc rõ, "trung bình" khi chữ mờ/viết tay hoặc suy luận, "thấp" khi không chắc.
+Chỉ xuất JSON theo schema.
+"""
+
+
+@dataclass(frozen=True, slots=True)
+class GeminiFieldValue:
+    """Giá trị một trường đọc được trên hồ sơ quét."""
+
+    value: str
+    page: int
+    confidence: str
+    evidence: str
+
+
+@dataclass(frozen=True, slots=True)
+class GeminiApplicationPage:
+    """Trang có thuộc đơn đăng ký đất đai không."""
+
+    i: int
+    is_application: bool
+    starts_copy: bool
+    title: str
+    reason: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -590,6 +698,157 @@ class GeminiAnalyzer:
             ),
             _extract_usage(response),
         )
+
+
+    def find_applications(
+        self,
+        pages: Sequence[tuple[int, bytes]],
+        previous: str = "",
+        *,
+        low_res: bool | None = None,
+    ) -> tuple[dict[int, GeminiApplicationPage], Usage]:
+        """Đánh dấu trang thuộc đơn đăng ký đất đai; ``previous`` nối ngữ cảnh lô trước."""
+
+        if low_res is None:
+            low_res = self.low_res
+        if not pages:
+            return {}, Usage()
+        from google.genai import types
+
+        prompt = APPLICATION_PROMPT.format(
+            previous=f"\nNgữ cảnh: {previous}\n" if previous else ""
+        )
+        contents: list[Any] = [prompt]
+        for page_number, image in pages:
+            contents.append(f"Ảnh kế tiếp có i={page_number}.")
+            contents.append(types.Part.from_bytes(data=image, mime_type="image/jpeg"))
+        config_arguments: dict[str, Any] = {
+            "temperature": 0,
+            "response_mime_type": "application/json",
+            "response_json_schema": APPLICATION_SCHEMA,
+            "thinking_config": types.ThinkingConfig(
+                thinking_level=types.ThinkingLevel.MINIMAL
+            ),
+        }
+        if low_res:
+            config_arguments["media_resolution"] = (
+                types.MediaResolution.MEDIA_RESOLUTION_LOW
+            )
+        config = types.GenerateContentConfig(**config_arguments)
+
+        def request() -> Any:
+            self._limiter.wait()
+            return self._client.models.generate_content(
+                model=self.model,
+                contents=contents,
+                config=config,
+            )
+
+        response = call_with_retry(
+            request,
+            attempts=6,
+            sleep=self._sleep,
+            random_value=self._random_value,
+        )
+        response_text = getattr(response, "text", None)
+        if not isinstance(response_text, str) or not response_text.strip():
+            raise ValueError("Gemini không trả kết quả tìm đơn đăng ký")
+        return (
+            _parse_applications(response_text, {page_number for page_number, _ in pages}),
+            _extract_usage(response),
+        )
+
+
+    def extract_fields(
+        self,
+        pages: Sequence[tuple[int, bytes]],
+        fields: Sequence[tuple[str, str]],
+        note: str = "",
+    ) -> tuple[dict[str, GeminiFieldValue], Usage]:
+        """Đọc các trường còn thiếu (``fields``: (khoá, mô tả)) trên ảnh trang hồ sơ."""
+
+        if not pages or not fields:
+            return {}, Usage()
+        from google.genai import types
+
+        listing = "\n".join(f"- {key}: {desc}" for key, desc in fields)
+        prompt = FIELDS_PROMPT.format(
+            fields=listing, note=f"\nGhi chú: {note}\n" if note else ""
+        )
+        contents: list[Any] = [prompt]
+        for page_number, image in pages:
+            contents.append(f"Ảnh kế tiếp là trang i={page_number}.")
+            contents.append(types.Part.from_bytes(data=image, mime_type="image/jpeg"))
+        config = types.GenerateContentConfig(
+            temperature=0,
+            response_mime_type="application/json",
+            response_json_schema=FIELDS_SCHEMA,
+            thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.LOW),
+        )
+
+        def request() -> Any:
+            self._limiter.wait()
+            return self._client.models.generate_content(
+                model=self.model,
+                contents=contents,
+                config=config,
+            )
+
+        response = call_with_retry(
+            request,
+            attempts=6,
+            sleep=self._sleep,
+            random_value=self._random_value,
+        )
+        response_text = getattr(response, "text", None)
+        if not isinstance(response_text, str) or not response_text.strip():
+            raise ValueError("Gemini không trả kết quả đọc trường")
+        return _parse_fields(response_text, {key for key, _ in fields}), _extract_usage(response)
+
+
+def _parse_fields(value: str, keys: set[str]) -> dict[str, GeminiFieldValue]:
+    """JSON đọc trường → {khoá: giá trị}; khoá lạ bị bỏ, khoá thiếu coi như không đọc được."""
+
+    payload = json.loads(value)
+    if not isinstance(payload, dict) or not isinstance(payload.get("fields"), list):
+        raise ValueError("Gemini trả về JSON không đúng cấu trúc fields")
+    parsed: dict[str, GeminiFieldValue] = {}
+    for item in payload["fields"]:
+        if not isinstance(item, Mapping) or item.get("key") not in keys:
+            continue
+        page = item.get("page")
+        parsed[str(item["key"])] = GeminiFieldValue(
+            value=str(item.get("value") or "").strip(),
+            page=page if isinstance(page, int) else 0,
+            confidence=str(item.get("confidence") or "").strip(),
+            evidence=str(item.get("evidence") or "").strip(),
+        )
+    return parsed
+
+
+def _parse_applications(value: str, expected_pages: set[int]) -> dict[int, GeminiApplicationPage]:
+    """Kiểm tra JSON đánh dấu trang đơn đăng ký có đủ và đúng kiểu cho mọi trang."""
+
+    payload = json.loads(value)
+    if not isinstance(payload, dict) or not isinstance(payload.get("pages"), list):
+        raise ValueError("Gemini trả về JSON không đúng cấu trúc pages")
+    parsed: dict[int, GeminiApplicationPage] = {}
+    for item in payload["pages"]:
+        if not isinstance(item, Mapping):
+            raise ValueError("Phần tử pages không phải object")
+        index = item.get("i")
+        is_app = item.get("is_application")
+        title, reason = item.get("title"), item.get("reason")
+        if (not isinstance(index, int) or type(is_app) is not bool
+                or not isinstance(title, str) or not isinstance(reason, str)):
+            raise ValueError("Gemini trả về sai kiểu dữ liệu")
+        if index in parsed:
+            raise ValueError(f"Gemini trả trùng trang {index}")
+        parsed[index] = GeminiApplicationPage(index, is_app, item.get("starts_copy") is True,
+                                              title.strip(), reason.strip())
+    if set(parsed) != expected_pages:
+        raise ValueError("Gemini không trả đủ đúng các trang trong batch")
+    return parsed
 
 
 def _parse_assignments(

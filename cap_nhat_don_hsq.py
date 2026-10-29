@@ -37,7 +37,7 @@ import unicodedata
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse
 from zipfile import BadZipFile
 
@@ -76,6 +76,9 @@ REQUEST_DELAY_SECONDS = 0.15
 # MPLIS hỏi captcha (captchaRequired) khi gửi request dồn dập → nghỉ ngẫu nhiên (giây, min-max).
 DELAY_GIUA_REQUEST = (1.5, 3.0)   # giữa 2 request bất kỳ của session (PhienGioiHan)
 DELAY_GIUA_DON = (5.0, 10.0)      # giữa 2 đơn (nghi_giua_don)
+# Giao diện gán: MPLIS đòi captcha → hàm(session, tên chức năng) chờ người dùng giải trên web.
+# True = đã giải → gửi lại đúng request đó; False / None = không chờ → CanCaptcha, dừng cả loạt.
+CHO_GIAI_CAPTCHA: Callable[[requests.Session, str], bool] | None = None
 
 # True = chỉ kiểm tra, không update thật.
 DRY_RUN = False
@@ -660,13 +663,37 @@ class PhienGioiHan(requests.Session):
 
     def request(self, *args, **kwargs):
         with self._khoa:
-            cho = self._xong_luc + random.uniform(*DELAY_GIUA_REQUEST) - time.monotonic()
-            if cho > 0:
-                time.sleep(cho)
-            try:
-                return super().request(*args, **kwargs)
-            finally:
-                self._xong_luc = time.monotonic()
+            while True:
+                cho = self._xong_luc + random.uniform(*DELAY_GIUA_REQUEST) - time.monotonic()
+                if cho > 0:
+                    time.sleep(cho)
+                try:
+                    response = super().request(*args, **kwargs)
+                finally:
+                    self._xong_luc = time.monotonic()
+                chuc_nang = chuc_nang_can_captcha(response)
+                ham = CHO_GIAI_CAPTCHA
+                if chuc_nang is None or ham is None or not ham(self, chuc_nang):
+                    return response
+                # Đã giải captcha: gửi lại y nguyên — file đính kèm đã đọc hết, tua về đầu.
+                for v in (kwargs.get("files") or {}).values():
+                    f = v[1] if isinstance(v, tuple) else v
+                    if hasattr(f, "seek"):
+                        f.seek(0)
+
+
+def chuc_nang_can_captcha(response: requests.Response) -> str | None:
+    """Response là {"captchaRequired": true, ...} → tên chức năng (functionId), không thì None."""
+    # Không dựa vào Content-Type (chưa rõ server trả gì); response lớn (file PDF tải về) thì bỏ qua.
+    if len(response.content) > 20000 or b"captchaRequired" not in response.content:
+        return None
+    try:
+        data = response.json()
+    except ValueError:
+        return None
+    if isinstance(data, dict) and data.get("captchaRequired"):
+        return str(data.get("functionId") or "")
+    return None
 
 
 def nghi_giua_don() -> None:

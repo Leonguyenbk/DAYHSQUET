@@ -100,6 +100,8 @@ class DayHsqTheoMoTaApp(TaiHsqApp):
             self.progress.value = done / total if total else 0
             self.status.value = label
             self.page.update()
+        elif kind == "captcha":
+            self._hien_captcha(*args)
         elif kind == "login":
             text, color, chrome_mo = args
             self.login_status.value = text

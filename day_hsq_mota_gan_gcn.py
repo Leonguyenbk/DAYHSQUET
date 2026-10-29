@@ -33,6 +33,7 @@ Với mỗi đơn:
 from __future__ import annotations
 
 import copy
+import json
 import os
 import time
 from typing import Any, Callable
@@ -474,6 +475,45 @@ def _ghi_an_toan(path: str, rows: list[dict[str, Any]]) -> str:
         return alt
 
 
+# ============================ TIẾN ĐỘ ============================
+# <thư mục gốc>/FILE_TIEN_DO: {"<mã đơn>": {"luc": ..., "files": [[tên tương đối, cỡ, mtime], ...]}} — đơn đã
+# đẩy xong không lỗi. Chạy lại thì bỏ qua đơn này, trừ khi file trong thư mục đơn đã đổi (thêm / bớt / sửa).
+FILE_TIEN_DO = "tien_do_day_hsq_gan_gcn.json"
+
+
+def doc_tien_do(goc: str) -> dict[str, Any]:
+    try:
+        with open(os.path.join(goc, FILE_TIEN_DO), encoding="utf-8") as fp:
+            data = json.load(fp)
+        return data if isinstance(data, dict) else {}
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as exc:
+        log(f"⚠ Không đọc được {FILE_TIEN_DO} ({exc}) — coi như chưa đơn nào xong.")
+        return {}
+
+
+def ghi_tien_do(goc: str, tien_do: dict[str, Any]) -> None:
+    path = os.path.join(goc, FILE_TIEN_DO)
+    tam = path + ".tmp"
+    with open(tam, "w", encoding="utf-8") as fp:
+        json.dump(tien_do, fp, ensure_ascii=False, indent=1)
+    os.replace(tam, path)  # ghi file tạm rồi thay: tắt ngang không hỏng file tiến độ
+
+
+def dau_van_tay(goc: str, pdfs: list[str]) -> list[list]:
+    kq = []
+    for p in pdfs:
+        st = os.stat(p)
+        kq.append([os.path.relpath(p, goc).replace(os.sep, "/"), st.st_size, int(st.st_mtime)])
+    return sorted(kq)
+
+
+def don_da_xong(tien_do: dict[str, Any], goc: str, madon: int, pdfs: list[str]) -> bool:
+    muc = tien_do.get(str(madon))
+    return isinstance(muc, dict) and muc.get("files") == dau_van_tay(goc, pdfs)
+
+
 def chay(
     client: core.MplisClient,
     goc: str,
@@ -481,9 +521,22 @@ def chay(
     nen_dung: Callable[[], bool] = lambda: False,
     giay_to: bool = False,
     bao_tien_do: Callable[[int, int, str], None] = lambda done, total, label: None,
+    bo_qua_da_xong: bool = True,
 ) -> str:
-    """Chạy cho mọi thư mục mã đơn trong `goc`; trả về đường dẫn Excel kết quả (ghi trong `goc`)."""
+    """Chạy cho mọi thư mục mã đơn trong `goc`; trả về đường dẫn Excel kết quả (ghi trong `goc`).
+
+    Đơn đẩy xong không lỗi được ghi vào FILE_TIEN_DO; bo_qua_da_xong → lần sau bỏ qua (file trong thư mục không đổi).
+    """
     theo_don, khong_nhan = dm.quet_thu_muc_goc(goc)
+    tien_do = doc_tien_do(goc)
+    if bo_qua_da_xong and tien_do and theo_don:
+        da_xong = {m for m, pdfs in theo_don.items() if don_da_xong(tien_do, goc, m, pdfs)}
+        if da_xong:
+            log(f"⏭ Bỏ qua {len(da_xong)} đơn đã đẩy xong ({FILE_TIEN_DO}); còn {len(theo_don) - len(da_xong)} đơn.")
+            theo_don = {m: p for m, p in theo_don.items() if m not in da_xong}
+        if not theo_don:
+            log("✅ Mọi đơn đều đã đẩy xong — không còn gì để chạy. (Bỏ tích 'Bỏ qua đơn đã xong' để chạy lại.)")
+            return ""
     if khong_nhan:
         log(f"⚠ Bỏ qua {len(khong_nhan)} thư mục có PDF nhưng không nằm trong thư mục mã đơn nào: {', '.join(khong_nhan[:10])}"
             + (" ..." if len(khong_nhan) > 10 else ""))
@@ -506,6 +559,10 @@ def chay(
             try:
                 dong = xu_ly_don(client, madon, pdfs, chay_thu, giay_to)
                 rows += dong
+                if not chay_thu and dong and not any(r.get("trang_thai") == "Lỗi" for r in dong):
+                    tien_do[str(madon)] = {"luc": time.strftime("%d/%m/%Y %H:%M:%S"),
+                                           "files": dau_van_tay(goc, pdfs)}
+                    ghi_tien_do(goc, tien_do)
                 loi_lien_tiep = loi_lien_tiep + 1 if dong and dong[0].get("ghi_chu") == dm.LOI_CHI_TIET else 0
                 if loi_lien_tiep >= dm.DUNG_SAU_SO_DON_LOI:
                     log(f"❌ {loi_lien_tiep} đơn liên tiếp không đọc được từ MPLIS — có thể đã hết phiên đăng nhập. "

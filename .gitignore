@@ -15,3 +15,6 @@ build/TaiDayHSQ/
 
 # Flet client đóng gói lúc build (flet_client_bundle.py tự tạo lại)
 build/flet_client/
+
+# File phiên bản sinh tự động khi build (*.spec)
+_phien_ban_*.py

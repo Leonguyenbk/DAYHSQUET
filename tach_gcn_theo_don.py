@@ -416,20 +416,29 @@ def kho_trang(ins: InspectedFile) -> list[tuple[int, int]]:
         doc.close()
 
 
-def bo_sung_mat(trang: list[int], gan: dict[int, dict[str, Any]], kho: list[tuple[int, int]]) -> tuple[list[int], str]:
+def la_so_a4(so: str) -> bool:
+    """Số phát hành GCN mẫu A4 mới: AA + 8 chữ số (1 tờ A4, mặt trước + mặt sau)."""
+    return bool(re.fullmatch(r"AA\d{8}", re.sub(r"[^0-9A-Z]", "", str(so or "").upper())))
+
+
+def bo_sung_mat(trang: list[int], gan: dict[int, dict[str, Any]], kho: list[tuple[int, int]],
+                so: str = "") -> tuple[list[int], str]:
     """
     GCN luôn có mặt trước + mặt sau, thường scan cùng khổ. Bản AI chỉ thấy 1 mặt → ghép trang liền kề (sau, rồi
     trước) cùng khổ, chưa gán cho GCN nào — CHỈ khi khổ đó ít gặp trong file (vd A3 trong file toàn A4); file
     toàn một khổ thì không đoán (dễ ghép nhầm đơn / hợp đồng), chỉ trả ghi chú để kiểm tra.
+    Riêng GCN mẫu A4 (số AA + 8 chữ số, `so` hoặc số AI đọc trên trang) luôn đủ 2 mặt → ghép dù file toàn A4.
     → (trang của bản, ghi chú).
     """
     if len(trang) != 1:
         return trang, ""
     i = trang[0]
-    if 2 * sum(k == kho[i] for k in kho) <= len(kho):
+    a4 = la_so_a4(so or gan[i]["serial_seen"])
+    if a4 or 2 * sum(k == kho[i] for k in kho) <= len(kho):
         for j in (i + 1, i - 1):
             if 0 <= j < len(kho) and kho[j] == kho[i] and not gan[j]["gcn"] and not gan[j].get("kem_theo"):
-                return sorted([i, j]), f"AI chỉ thấy 1 mặt; đã ghép trang {j + 1} cùng khổ làm mặt còn lại"
+                return sorted([i, j]), (f"GCN mẫu A4 (AA + 8 số): đã ghép trang {j + 1} làm mặt còn lại" if a4 else
+                                        f"AI chỉ thấy 1 mặt; đã ghép trang {j + 1} cùng khổ làm mặt còn lại")
     return trang, "Bản GCN chỉ có 1 mặt (thiếu mặt trước/sau?) — kiểm tra lại"
 
 
@@ -867,13 +876,15 @@ def _tach_gcn_don(tt: TaiTruoc, analyzer: GeminiAnalyzer, detail: dict[str, Any]
         kho = kho_trang(ins)
         for so, _ in ds_so:
             for trang in tach_ban(gan, so):
-                trang, ghi_chu_mat = bo_sung_mat(trang, gan, kho)
+                trang, ghi_chu_mat = bo_sung_mat(trang, gan, kho, so)
                 ban = {"path": path, "trang": trang, "gan": gan, "ins": ins, "ghi_chu_mat": ghi_chu_mat}
                 danh_gia_ban(ban, ds_chu, analyzer, model, cache, usage)
                 theo_so.setdefault(so, []).append(ban)
                 tom_tat.append(f"{so}: tr.{_trang_text(trang)}"
                                + (f" (chủ: {ban['chu'] or '?'}{' ✓' if ban['khop'] else ' ✗'})" if ds_chu else ""))
         for trang in _nhom_khong_khop(gan):
+            if len(trang) == 1 and la_so_a4(gan[trang[0]]["serial_seen"]):
+                trang, _ = bo_sung_mat(trang, gan, kho)
             khong_khop.append((path, trang, gan, ins))
             tom_tat.append(f"GCN khác: tr.{_trang_text(trang)}")
         log(f"   {ten} ({ins.page_count} trang): " + ("; ".join(tom_tat) or "không có trang GCN"))

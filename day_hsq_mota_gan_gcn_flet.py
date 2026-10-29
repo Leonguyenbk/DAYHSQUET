@@ -29,6 +29,9 @@ class DayHsqMoTaGanGcnApp(DayHsqTheoMoTaApp):
         self.giay_to = ft.Checkbox(
             label="HSQ có đẩy GCN: chuyển mọi thành phần khác của HSQ đó sang loại Giấy tờ", value=True,
             label_style=ft.TextStyle(color=CyberTheme.AMBER, size=12))
+        self.bo_qua_da_xong = ft.Checkbox(
+            label=f"Bỏ qua đơn đã đẩy xong (nhớ trong {gg.FILE_TIEN_DO} ở thư mục gốc)", value=True,
+            label_style=ft.TextStyle(color=CyberTheme.TEXT_LIGHT, size=12))
         self.excel_text = ft.Text("", color=CyberTheme.GREEN, size=10, selectable=True)
         self.btn_quet = self._button("Quét thư mục", ft.Icons.FOLDER_ZIP_ROUNDED, CyberTheme.PURPLE, self._quet)
         self.btn_kiem_tra = self._button("Kiểm tra (chạy thử)", ft.Icons.SEARCH_ROUNDED, CyberTheme.BLUE,
@@ -43,6 +46,7 @@ class DayHsqMoTaGanGcnApp(DayHsqTheoMoTaApp):
                 self.out_dir, self._icon_btn(ft.Icons.FOLDER_OPEN_ROUNDED, "Chọn thư mục", self._chon_out_dir),
             ]),
             self.giay_to,
+            self.bo_qua_da_xong,
             self._note(
                 "• Mỗi đơn 1 thư mục con, tên bắt đầu bằng mã đơn: 13456477 hoặc 13456477_Nguyen Van A.\n"
                 "• File thường: tên file = mô tả HSQ ('Đơn đăng ký.pdf', '03_Trích lục.pdf', được '_signed', tên "
@@ -59,7 +63,9 @@ class DayHsqMoTaGanGcnApp(DayHsqTheoMoTaApp):
                 "HSQ không đẩy GCN → không đụng.\n"
                 "• Sau khi gửi kiểm tra lại; MPLIS bị giảm thành phần → dừng toàn bộ; 3 đơn liên tiếp không đọc "
                 "được (hết phiên) → dừng.\n"
-                "• Excel kết quả ghi vào thư mục gốc."
+                "• Excel kết quả ghi vào thư mục gốc.\n"
+                f"• Đơn đẩy xong không lỗi được nhớ trong {gg.FILE_TIEN_DO}: chạy lại thì bỏ qua, trừ khi file "
+                "trong thư mục đơn đã đổi. Xoá file đó (hoặc bỏ tích) để chạy lại từ đầu."
             ),
             ft.Row(spacing=8, wrap=True, controls=[self.btn_quet, self.btn_kiem_tra, self.btn_day]),
             self.excel_text,
@@ -81,22 +87,28 @@ class DayHsqMoTaGanGcnApp(DayHsqTheoMoTaApp):
             return
 
         def bat_dau():
-            self._run_thread(self._worker, nguon, goc, chay_thu, bool(self.giay_to.value))
+            self._run_thread(self._worker, nguon, goc, chay_thu, bool(self.giay_to.value),
+                             bool(self.bo_qua_da_xong.value))
 
         if chay_thu:
             bat_dau()
             return
-        so_don = len(dm.quet_thu_muc_goc(goc)[0])
+        theo_don = dm.quet_thu_muc_goc(goc)[0]
+        so_don = len(theo_don)
+        if self.bo_qua_da_xong.value:
+            tien_do = gg.doc_tien_do(goc)
+            so_don -= sum(gg.don_da_xong(tien_do, goc, m, p) for m, p in theo_don.items())
         self._hoi_xac_nhan(
             "Xác nhận đẩy HSQ",
-            f"Đẩy HSQ cho {so_don} đơn trong:\n{goc}\n\n"
+            f"Đẩy HSQ cho {so_don} đơn{' chưa xong' if self.bo_qua_da_xong.value else ''} trong:\n{goc}\n\n"
             + ("HSQ có đẩy GCN: mọi thành phần khác sẽ chuyển sang Giấy tờ.\n\n" if self.giay_to.value else "")
             + "Thao tác GHI THẬT lên MPLIS. Nên bấm 'Kiểm tra' trước để xem file nào thay thành phần nào. Tiếp tục?",
             "Đẩy lên",
             bat_dau,
         )
 
-    def _worker(self, nguon: dict[str, Any], goc: str, chay_thu: bool, giay_to: bool = False) -> None:
+    def _worker(self, nguon: dict[str, Any], goc: str, chay_thu: bool, giay_to: bool = False,
+                bo_qua_da_xong: bool = True) -> None:
         ket_thuc = "Hoàn tất"
         try:
             client = self._tao_client(nguon)
@@ -105,8 +117,10 @@ class DayHsqMoTaGanGcnApp(DayHsqTheoMoTaApp):
                 nen_dung=lambda: self.stop_flag,
                 giay_to=giay_to,
                 bao_tien_do=lambda done, total, label: self._emit("progress", done, total, label),
+                bo_qua_da_xong=bo_qua_da_xong,
             )
-            self._emit("excel_kq", excel)
+            if excel:
+                self._emit("excel_kq", excel)
             if self.stop_flag:
                 ket_thuc = "Đã dừng"
         except day.DungKhanCap as exc:

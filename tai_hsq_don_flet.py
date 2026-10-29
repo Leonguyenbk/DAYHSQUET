@@ -158,6 +158,7 @@ class TaiHsqApp:
         p.window.on_event = self._on_window_event
 
         thd.dat_ham_log(lambda msg: self._emit("log", msg))
+        core.CHO_GIAI_CAPTCHA = self._cho_giai_captcha
         asyncio.create_task(self._consume())
         mau = thd.doc_mau_da_luu()
         self._append_log("Endpoint tải: " + (mau["url"] if mau else thd.MAU_MAC_DINH[0]["url"]), "title")
@@ -197,29 +198,69 @@ class TaiHsqApp:
                                                           self._build_delay_row()]))
 
     def _build_delay_row(self) -> ft.Control:
-        """Thời gian chờ (giây, '5' hoặc '1.5-3' = ngẫu nhiên trong khoảng) — MPLIS hỏi captcha khi gửi dồn dập.
-        Đổi là áp dụng ngay, kể cả khi đang chạy."""
-        def o_nhap(label: str, ten_bien: str) -> ft.TextField:
-            o = self._input(label, "vd 5 hoặc 1.5-3", expand=True)
-            o.value = core.ghi_khoang_giay(getattr(core, ten_bien))
-
-            def doi(_=None) -> None:
-                try:
-                    setattr(core, ten_bien, core.doc_khoang_giay(o.value))
-                    o.error_text = None
-                except ValueError:
-                    o.error_text = "Nhập số giây: 5 hoặc 1.5-3"
-                o.update()
-
-            o.on_change = doi
-            return o
-
-        self.delay_request = o_nhap("Chờ giữa các thao tác (giây)", "DELAY_GIUA_REQUEST")
-        self.delay_don = o_nhap("Chờ giữa các đơn (giây)", "DELAY_GIUA_DON")
+        """MPLIS hỏi captcha khi gửi dồn dập → cho chỉnh thời gian chờ."""
+        self.o_cho = [self._o_cho(label, ten_bien) for label, ten_bien in self.O_CHO]
         return ft.Column(spacing=4, controls=[
-            ft.Row(spacing=8, controls=[self.delay_request, self.delay_don]),
+            ft.Row(spacing=8, controls=self.o_cho),
             self._note("MPLIS hỏi captcha khi gửi quá nhanh → tăng thời gian chờ. '1.5-3' = ngẫu nhiên 1,5–3 giây."),
         ])
+
+    # ------------------------------------------------------------------ captcha
+    def _cho_giai_captcha(self, session, chuc_nang: str) -> bool:
+        """core.CHO_GIAI_CAPTCHA (chạy ở luồng worker): hiện hộp thoại, chờ người dùng giải captcha trên web.
+        True = đã xác nhận → gửi lại request; False = dừng."""
+        if self.stop_flag:
+            return False
+        xong = threading.Event()
+        kq = {"tiep": False}
+        thd.log(f"⚠ MPLIS yêu cầu captcha ({chuc_nang}) — đang chờ xác nhận...")
+        self._emit("captcha", chuc_nang, xong, kq)
+        while not xong.wait(0.5):
+            if self.stop_flag:
+                return False
+        if not kq["tiep"]:
+            thd.log("⏹ Không tiếp tục sau captcha — dừng.")
+            return False
+        # Chế độ Chrome: chép lại cookie (giải captcha có thể làm server cấp cookie mới).
+        driver = self.login_client.driver if self.che_do.value == "login" and self.login_client else None
+        if driver is not None:
+            try:
+                for c in driver.get_cookies():
+                    session.cookies.set(c["name"], c["value"], domain=c.get("domain"), path=c.get("path", "/"))
+            except Exception as exc:
+                thd.log(f"   ⚠ Không chép lại được cookie từ Chrome: {core.rut_gon_text(exc, 150)}")
+        thd.log("▶ Đã xác nhận captcha — gửi lại thao tác đang dở.")
+        return True
+
+    def _hien_captcha(self, chuc_nang: str, xong: threading.Event, kq: dict[str, bool]) -> None:
+        o_cho = [self._o_cho(label, ten_bien) for label, ten_bien in self.O_CHO]
+
+        def dong(tiep: bool):
+            def handler(_e=None):
+                kq["tiep"] = tiep
+                self.page.pop_dialog()
+                for o, (_, ten_bien) in zip(self.o_cho, self.O_CHO):  # đồng bộ ô ngoài khung chính
+                    o.value = core.ghi_khoang_giay(getattr(core, ten_bien))
+                    o.error_text = None
+                self.page.update()
+                xong.set()
+            return handler
+
+        self.page.show_dialog(ft.AlertDialog(
+            modal=True,
+            title=ft.Text("MPLIS yêu cầu xác nhận captcha", size=15),
+            content=ft.Column(tight=True, spacing=10, width=440, controls=[
+                ft.Text(f"Chức năng: {chuc_nang or '?'}\n\n"
+                        "1. Mở MPLIS trên Chrome, thao tác 1 lần (vd mở 1 đơn / lưu HSQ) và giải captcha.\n"
+                        "2. Bấm 'Đã xác nhận – tiếp tục': tool gửi lại đúng thao tác đang dở rồi chạy tiếp.\n\n"
+                        "Có thể tăng thời gian chờ để đỡ bị hỏi lại:", size=12),
+                ft.Row(spacing=8, controls=o_cho),
+            ]),
+            actions=[ft.TextButton("Dừng", on_click=dong(False)),
+                     ft.TextButton("Đã xác nhận – tiếp tục", on_click=dong(True))],
+        ))
+        self.status.value = "⏸ Chờ xác nhận captcha"
+        self.page.update()
 
     def _build_log_card(self) -> ft.Container:
         self.progress = ft.ProgressBar(value=0, color=CyberTheme.CYAN, bgcolor=CyberTheme.BORDER_COLOR)
@@ -373,6 +414,8 @@ class TaiHsqApp:
                 self.btn_chrome.disabled = chrome_mo
                 self.btn_chrome.opacity = 0.4 if chrome_mo else 1
                 self.page.update()
+            elif kind == "captcha":
+                self._hien_captcha(*args)
             elif kind == "done":
                 self.is_running = False
                 self._set_running(False)

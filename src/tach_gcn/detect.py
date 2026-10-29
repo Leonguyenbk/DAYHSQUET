@@ -25,13 +25,13 @@ _REGISTRATION_NUMBER_LABELS = (
 _CERTIFICATE_SERIAL_LABELS = (
     re.compile(
         r"\bSO\s+(?:PHAT\s+HANH\s+)?(?:GIAY\s+CHUNG\s+NHAN|GCN)\s+"
-        r"([A-Z]{2})\s*(\d{6})\b"
+        r"([A-Z]{2})\s*(\d{8}|\d{6})\b"
     ),
     re.compile(
-        r"\b(?:SO\s+SERI|SERIAL|MA\s+PHOI)\s+([A-Z]{2})\s*(\d{6})\b"
+        r"\b(?:SO\s+SERI|SERIAL|MA\s+PHOI)\s+([A-Z]{2})\s*(\d{8}|\d{6})\b"
     ),
 )
-_CERTIFICATE_SERIAL = re.compile(r"\b([A-Z]{2})\s*(\d{6})\b")
+_CERTIFICATE_SERIAL = re.compile(r"\b([A-Z]{2})\s*(\d{8}|\d{6})\b")
 
 
 @dataclass(slots=True)
@@ -102,7 +102,7 @@ def extract_certificate_serial(text: str) -> str:
             if candidate != registration_number:
                 return candidate
 
-    # Mã phôi thường được in riêng dạng hai chữ cái và sáu chữ số. Chỉ cho
+    # Mã phôi thường được in riêng dạng hai chữ cái và sáu chữ số (mẫu A4 mới: AA + tám chữ số). Chỉ cho
     # phép đoán khi chính trang có ngữ cảnh GCN; trang sơ đồ đứng riêng không đủ.
     if "GIAY CHUNG NHAN" not in normalized and "CERTIFICATE" not in normalized:
         return ""
