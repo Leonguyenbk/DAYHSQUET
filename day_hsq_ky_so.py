@@ -30,6 +30,7 @@ import uuid
 from typing import Any, Callable
 
 import cap_nhat_don_hsq as core
+import nhom1_mplis as nhom1
 import tai_hsq_don as thd
 
 log = thd.log
@@ -287,6 +288,7 @@ def day_tu_excel(
     chay_thu: bool = True,
     nen_dung: Callable[[], bool] = lambda: False,
     bao_tien_do: Callable[[int, int, str], None] = lambda done, total, label: None,
+    bo_qua_nhom_1: bool = True,
 ) -> dict[str, int]:
     wb, ws, col, rows = doc_excel(excel_path)
     thong_ke = {"da_day": 0, "loi": 0, "bo_qua": 0, "chay_thu": 0}
@@ -327,6 +329,20 @@ def day_tu_excel(
                     ghi_dong(ws, col, r, trang_thai_day="Lỗi", ghi_chu_day=core.rut_gon_text(exc, 300))
                 thong_ke["loi"] += len(ds_don)
                 log(f"❌ Đơn {madon}: {core.rut_gon_text(exc, 300)}")
+                luu_excel(wb, excel_path)
+                continue
+
+            try:
+                da_dat_nhom_1 = bo_qua_nhom_1 and nhom1.da_dat(client, core.safe_int(madon), detail)
+            except core.HetPhien as exc:
+                for r in ds_don:
+                    ghi_dong(ws, col, r, trang_thai_day="Lỗi", ghi_chu_day=f"HẾT PHIÊN — chưa đẩy: {exc}")
+                luu_excel(wb, excel_path)
+                raise
+            if da_dat_nhom_1:
+                for r in ds_don:
+                    ghi_dong(ws, col, r, trang_thai_day="Bỏ qua", ghi_chu_day=nhom1.LY_DO_DA_DAT)
+                thong_ke["bo_qua"] += len(ds_don)
                 luu_excel(wb, excel_path)
                 continue
 

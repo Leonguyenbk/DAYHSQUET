@@ -40,6 +40,7 @@ from typing import Any, Callable
 
 import bo_sung_gcn_hsq as bs
 import cap_nhat_don_hsq as core
+import nhom1_mplis as nhom1
 import day_gcn_theo_thu_muc as dg
 import day_hsq_ky_so as day
 import day_hsq_theo_mota as dm
@@ -306,12 +307,14 @@ def _dong_giay_to(madon: int, t: dict[str, Any], **kw) -> dict[str, Any]:
 
 
 def xu_ly_don(client: core.MplisClient, madon: int, pdfs: list[str], chay_thu: bool,
-              giay_to: bool = False) -> list[dict[str, Any]]:
+              giay_to: bool = False, bo_qua_nhom_1: bool = True) -> list[dict[str, Any]]:
     if not pdfs:
         return [_dong(madon, trang_thai="Bỏ qua", ghi_chu="Thư mục đơn không có file PDF")]
     detail = client.lay_chi_tiet_don(madon)
     if detail is None:
         return [_dong(madon, p, trang_thai="Lỗi", ghi_chu=dm.LOI_CHI_TIET) for p in pdfs]
+    if bo_qua_nhom_1 and nhom1.da_dat(client, madon, detail):
+        return [_dong(madon, p, trang_thai="Bỏ qua", ghi_chu=nhom1.LY_DO_DA_DAT) for p in pdfs]
 
     viec, bo_qua = lap_ke_hoach(detail, pdfs)
     rows = [_dong(madon, p, tp, trang_thai="Bỏ qua", ghi_chu=ly_do) for p, tp, ly_do in bo_qua]

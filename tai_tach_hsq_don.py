@@ -44,6 +44,7 @@ from tach_gcn.report import load_cache, save_cache
 
 import bo_sung_gcn_hsq as bs
 import cap_nhat_don_hsq as core
+import nhom1_mplis as nhom1
 import day_hsq_ky_so as day
 import day_hsq_theo_mota as dm
 import tai_hsq_don as thd
@@ -279,13 +280,27 @@ def _dong_gcn_chua_so(id_don: int, gcn_chua_so: list[dict[str, Any]],
 
 def xu_ly_don(client, analyzer: GeminiAnalyzer, id_don: int, out_dir: str, cache: dict, usage: Usage,
               tt: tg.TaiTruoc, model: str = DEFAULT_MODEL, loc_truoc: bool = True, quet_het: bool = False,
-              nen_dung: Callable[[], bool] = lambda: False) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """→ (dòng Excel tách, dòng Excel tải). Hết phiên → ném core.HetPhien (ket_qua = các dòng đã có)."""
+              nen_dung: Callable[[], bool] = lambda: False, bo_qua_nhom_1: bool = True,
+              nhom1_kq: dict[int, Any] | None = None) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """
+    → (dòng Excel tách, dòng Excel tải). Hết phiên → ném core.HetPhien (ket_qua = các dòng đã có).
+    bo_qua_nhom_1: đơn đã đạt nhóm 1 trên MPLIS → không tải / tách. nhom1_kq[id_don] = (đạt?, bản ghi làm sạch)
+    để bước tự kiểm tra thông tin thiếu dùng lại, không tra MPLIS lần nữa.
+    """
     detail = tt.chi_tiet(id_don)
     if detail is None:
         log(f"❌ Đơn {id_don}: không lấy được chi tiết")
         return ([_dong_don(id_don, trang_thai="Lỗi", ghi_chu="Không lấy được chi tiết đơn")],
                 [{"madon": id_don, "trang_thai_tai": "Lỗi", "ghi_chu_tai": "Không lấy được chi tiết đơn"}])
+    if bo_qua_nhom_1:
+        with tt.khoa:  # không gửi chồng với luồng tải nền
+            kq_nhom1 = nhom1.kiem_tra(tt.client, id_don, detail)
+        if nhom1_kq is not None:
+            nhom1_kq[id_don] = kq_nhom1
+        if kq_nhom1[0]:
+            tt.huy_don(id_don)
+            return ([_dong_don(id_don, trang_thai="Bỏ qua", ghi_chu=nhom1.LY_DO_DA_DAT)],
+                    [{"madon": id_don, "trang_thai_tai": "Bỏ qua", "ghi_chu_tai": nhom1.LY_DO_DA_DAT}])
 
     files = thd.liet_ke_file_hsq(detail)
     ds_gcn = [g for g in bs.gcn_hien_hanh(detail) if str(g.get("soPhatHanh") or "").strip()]
@@ -384,13 +399,15 @@ def chay(client, ids: list[int], out_dir: str, api_key: str, model: str = DEFAUL
          dung_file_da_tai: bool = False, nen_dung: Callable[[], bool] = lambda: False,
          bao_tien_do: Callable[[int, int, str], None] = lambda done, total, label: None,
          loc_truoc: bool = True, quet_het: bool = False,
-         muc_thieu: list | None = None, tu_kiem_tra_thieu: bool = False) -> tuple[str, str, str]:
+         muc_thieu: list | None = None, tu_kiem_tra_thieu: bool = False,
+         bo_qua_nhom_1: bool = True) -> tuple[str, str, str]:
     """
     Xử lý danh sách đơn → (Excel tách, Excel tải, Excel thông tin thiếu hoặc ''). Hết phiên → dừng cả loạt
     (đã ghi Excel). muc_thieu: các lay_thong_tin_thieu_hsq.MucThieu — đơn của chúng cũng được tải & tách, rồi
     AI đọc các trường thiếu trên chính HSQ vừa tải (chung file tải, chung cache AI).
     tu_kiem_tra_thieu: mỗi đơn hỏi MPLIS đơn đang thiếu thông tin gì (thông báo chiTietThongTinThieu) rồi đọc
     đúng các thông tin đó — cộng thêm vào muc_thieu (bỏ trùng).
+    bo_qua_nhom_1: đơn đã đạt nhóm 1 trên MPLIS → bỏ qua (không tải, không tách, không đọc thông tin thiếu).
     """
     import lay_thong_tin_thieu_hsq as ltt  # import ở đây: ltt import ngược module này
 
@@ -430,6 +447,7 @@ def chay(client, ids: list[int], out_dir: str, api_key: str, model: str = DEFAUL
     log(f"Tải & tách HSQ cho {len(ids)} đơn" + (f", lấy {len(muc_thieu)} mục thông tin thiếu" if muc_thieu else "")
         + (", tự kiểm tra thông tin thiếu trên MPLIS" if tu_kiem_tra_thieu else "")
         + f" | model {model} → {out_dir}")
+    nhom1_kq: dict[int, Any] = {}
     tt = tg.TaiTruoc(client, downloader, out_dir, dung_file_da_tai)
     tt.dang_ky(ids)
     try:
@@ -443,11 +461,18 @@ def chay(client, ids: list[int], out_dir: str, api_key: str, model: str = DEFAUL
                 tt.chuan_bi_don(id_sau)
             try:
                 dong, dong_tai = xu_ly_don(client, analyzer, id_don, out_dir, cache, usage, tt, model, loc_truoc,
-                                           quet_het, nen_dung)
+                                           quet_het, nen_dung, bo_qua_nhom_1, nhom1_kq)
                 rows.extend(dong)
                 rows_tai.extend(dong_tai)
+                da_dat, ban_ghi = nhom1_kq.get(id_don, (False, None))
+                if da_dat:
+                    for m in theo_don.get(id_don, []):
+                        m.loi.append(nhom1.LY_DO_DA_DAT)
+                    xong.add(id_don)
+                    luu()
+                    continue
                 if tu_kiem_tra_thieu and not nen_dung():
-                    _them_muc_thieu_mplis(client, tt, id_don, muc_thieu, theo_don)
+                    _them_muc_thieu_mplis(client, tt, id_don, muc_thieu, theo_don, ban_ghi)
                 if theo_don.get(id_don) and not nen_dung():
                     log(f"   --- Lấy {len(theo_don[id_don])} mục thông tin thiếu ---")
                     ltt.xu_ly_don(analyzer, id_don, theo_don[id_don], cache, usage, tt, model, nen_dung)
@@ -484,16 +509,23 @@ def chay(client, ids: list[int], out_dir: str, api_key: str, model: str = DEFAUL
     return excel, excel_tai, excel_thieu
 
 
-def _them_muc_thieu_mplis(client, tt: tg.TaiTruoc, id_don: int, muc_thieu: list, theo_don: dict) -> None:
-    """Hỏi MPLIS đơn đang thiếu gì → thêm các mục chưa có vào muc_thieu / theo_don. Hết phiên → ném lên."""
+def _them_muc_thieu_mplis(client, tt: tg.TaiTruoc, id_don: int, muc_thieu: list, theo_don: dict,
+                          ban_ghi: list[dict] | None = None) -> None:
+    """
+    Hỏi MPLIS đơn đang thiếu gì → thêm các mục chưa có vào muc_thieu / theo_don. Hết phiên → ném lên.
+    ban_ghi: bản ghi làm sạch đã tra lúc kiểm tra nhóm 1 → dùng lại, không tra MPLIS lần nữa.
+    """
     import lay_thong_tin_thieu_hsq as ltt
 
     detail = tt.chi_tiet(id_don)
     if not detail:
         return
     try:
-        with tt.khoa:  # không gửi chồng với luồng tải nền
-            moi = ltt.lay_muc_thieu_mplis(client, id_don, detail)
+        if ban_ghi is not None and not ltt.TRA_CUU_TRUC_TIEP_THEO_ID:
+            moi = ltt.muc_thieu_tu_ban_ghi(id_don, ban_ghi) or []
+        else:
+            with tt.khoa:  # không gửi chồng với luồng tải nền
+                moi = ltt.lay_muc_thieu_mplis(client, id_don, detail)
     except core.HetPhien:
         raise
     except Exception as exc:
@@ -526,6 +558,9 @@ def _tong_ket(rows: list[dict[str, Any]], rows_tai: list[dict[str, Any]], out_di
     if dem("Không khớp"):
         log(f"⚠ {dem('Không khớp')} nhóm trang GCN không thuộc GCN hiện hành → "
             f"{os.path.join(out_dir, tg.THU_MUC_KHONG_KHOP)}")
+    so_nhom_1 = sum(r.get("ghi_chu") == nhom1.LY_DO_DA_DAT for r in rows)
+    if so_nhom_1:
+        log(f"⏭ {so_nhom_1} đơn đã đạt nhóm 1 trên MPLIS — bỏ qua, không tải")
     if dem("Không thấy đơn"):
         log(f"⚠ {dem('Không thấy đơn')} đơn không có GCN và không tìm thấy đơn đăng ký")
     log(f"Chi phí Gemini ước tính: {usage.estimated_cost_usd:.4f} USD "

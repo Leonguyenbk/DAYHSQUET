@@ -33,6 +33,7 @@ from typing import Any, Callable
 
 import bo_sung_gcn_hsq as bs
 import cap_nhat_don_hsq as core
+import nhom1_mplis as nhom1
 import day_hsq_ky_so as day
 import day_hsq_mota_gan_gcn as gg
 import day_hsq_theo_mota as dm
@@ -218,10 +219,12 @@ def xu_ly_don_khong_gcn(client: core.MplisClient, madon: int, detail: dict[str, 
 # ============================ XỬ LÝ 1 ĐƠN ============================
 
 def xu_ly_don(client: core.MplisClient, madon: int, ds_pdf: list[tuple[str, str]],
-              chay_thu: bool) -> list[dict[str, Any]]:
+              chay_thu: bool, bo_qua_nhom_1: bool = True) -> list[dict[str, Any]]:
     detail = client.lay_chi_tiet_don(madon)
     if detail is None:
         return [gg._dong(madon, trang_thai="Lỗi", ghi_chu=dm.LOI_CHI_TIET)]
+    if bo_qua_nhom_1 and nhom1.da_dat(client, madon, detail):
+        return [gg._dong(madon, trang_thai="Bỏ qua", ghi_chu=nhom1.LY_DO_DA_DAT)]
     ds_gcn = bs.gcn_hien_hanh(detail)
     if not ds_gcn:
         return xu_ly_don_khong_gcn(client, madon, detail, chay_thu)

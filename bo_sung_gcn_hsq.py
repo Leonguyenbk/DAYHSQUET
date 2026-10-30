@@ -26,6 +26,7 @@ import uuid
 from typing import Any, Callable
 
 import cap_nhat_don_hsq as core
+import nhom1_mplis as nhom1
 import day_hsq_ky_so as day
 import tai_hsq_don as thd
 
@@ -131,6 +132,7 @@ def xu_ly_don(
     madon: int,
     out_dir: str,
     chay_thu: bool,
+    bo_qua_nhom_1: bool = True,
 ) -> dict[str, Any]:
     kq: dict[str, Any] = {"madon": madon, "trang_thai": "Lỗi", "ghi_chu": ""}
 
@@ -156,6 +158,9 @@ def xu_ly_don(
         return kq
     if not thieu:
         kq.update(trang_thai="Đủ", ghi_chu="Mọi GCN đã có thành phần HSQ")
+        return kq
+    if bo_qua_nhom_1 and nhom1.da_dat(client, madon, detail):
+        kq.update(trang_thai="Bỏ qua", ghi_chu=nhom1.LY_DO_DA_DAT)
         return kq
     if len(thanh_phan_gcn) != 1:
         kq.update(trang_thai="Bỏ qua",

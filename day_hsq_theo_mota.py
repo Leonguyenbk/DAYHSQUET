@@ -41,6 +41,7 @@ import time
 from typing import Any, Callable
 
 import cap_nhat_don_hsq as core
+import nhom1_mplis as nhom1
 import day_hsq_ky_so as day
 import tai_hsq_don as thd
 
@@ -279,7 +280,8 @@ def _dong(madon: int, path: str = "", tp: dict | None = None, **kw) -> dict[str,
     }
 
 
-def xu_ly_don(client: core.MplisClient, madon: int, pdfs: list[str], chay_thu: bool) -> list[dict[str, Any]]:
+def xu_ly_don(client: core.MplisClient, madon: int, pdfs: list[str], chay_thu: bool,
+              bo_qua_nhom_1: bool = True) -> list[dict[str, Any]]:
     if not pdfs:
         return [_dong(madon, trang_thai="Bỏ qua", ghi_chu="Thư mục đơn không có file PDF")]
 
@@ -290,6 +292,8 @@ def xu_ly_don(client: core.MplisClient, madon: int, pdfs: list[str], chay_thu: b
     if not ds_tp:
         return [_dong(madon, p, trang_thai="Bỏ qua",
                       ghi_chu="Đơn chưa có HSQ — dùng tool đẩy HSQ (cap_nhat_don_hsq) để tạo mới") for p in pdfs]
+    if bo_qua_nhom_1 and nhom1.da_dat(client, madon, detail):
+        return [_dong(madon, p, trang_thai="Bỏ qua", ghi_chu=nhom1.LY_DO_DA_DAT) for p in pdfs]
 
     rows: list[dict[str, Any]] = []
     # ---- khớp file → thành phần

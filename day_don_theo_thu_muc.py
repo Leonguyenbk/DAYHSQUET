@@ -36,6 +36,7 @@ from typing import Any, Callable
 
 import bo_sung_gcn_hsq as bs
 import cap_nhat_don_hsq as core
+import nhom1_mplis as nhom1
 import day_gcn_theo_thu_muc as dg
 import day_hsq_ky_so as day
 import day_hsq_theo_mota as dm
@@ -338,7 +339,8 @@ def cap_nhat_ttdk(client: core.MplisClient, madon: int, detail: dict[str, Any]) 
                  ghi_chu="coQuyenQuanLy = true, dieuKienCapGiay = 3, duDieuKienCapGiay = false")
 
 
-def xu_ly_don(client: core.MplisClient, madon: int, pdfs: list[str], chay_thu: bool) -> list[dict[str, Any]]:
+def xu_ly_don(client: core.MplisClient, madon: int, pdfs: list[str], chay_thu: bool,
+              bo_qua_nhom_1: bool = True) -> list[dict[str, Any]]:
     detail = client.lay_chi_tiet_don(madon)
     if detail is None:
         return [_dong(madon, trang_thai="Lỗi", ghi_chu=dm.LOI_CHI_TIET)]
@@ -350,6 +352,8 @@ def xu_ly_don(client: core.MplisClient, madon: int, pdfs: list[str], chay_thu: b
     if not file_don:
         return [_dong(madon, trang_thai="Bỏ qua",
                       ghi_chu="Thư mục không có file đơn (tên có hậu tố '-DON' hoặc là 'Đơn đăng ký' / 'Đơn đề nghị')")]
+    if bo_qua_nhom_1 and nhom1.da_dat(client, madon, detail):
+        return [_dong(madon, trang_thai="Bỏ qua", ghi_chu=nhom1.LY_DO_DA_DAT)]
 
     ke_hoach = lap_ke_hoach(detail, file_don)
     for k in ke_hoach:

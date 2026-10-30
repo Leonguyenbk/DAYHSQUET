@@ -113,7 +113,11 @@ class TaiTachHsqWindow(TaiHsqPySide6Window):
         self.chk_tu_kiem_tra = QCheckBox("Tự kiểm tra đơn đang thiếu thông tin gì trên MPLIS → AI đọc thông tin đó")
         self.chk_tu_kiem_tra.setChecked(True)
         self.chk_tu_kiem_tra.setStyleSheet("color: #4ade80;")
-        for chk in (self.chk_tu_kiem_tra, self.chk_dung_file_da_tai, self.chk_quet_het, self.chk_khong_loc):
+        self.chk_bo_qua_nhom_1 = QCheckBox("Bỏ qua đơn đã đạt nhóm 1 trên MPLIS (không tải, không tách)")
+        self.chk_bo_qua_nhom_1.setChecked(True)
+        self.chk_bo_qua_nhom_1.setStyleSheet("color: #4ade80;")
+        for chk in (self.chk_bo_qua_nhom_1, self.chk_tu_kiem_tra, self.chk_dung_file_da_tai, self.chk_quet_het,
+                    self.chk_khong_loc):
             layout.addWidget(chk)
 
         note = QLabel(
@@ -214,6 +218,7 @@ class TaiTachHsqWindow(TaiHsqPySide6Window):
             "loc_truoc": not self.chk_khong_loc.isChecked(),
             "muc_thieu": muc_thieu,
             "tu_kiem_tra_thieu": self.chk_tu_kiem_tra.isChecked(),
+            "bo_qua_nhom_1": self.chk_bo_qua_nhom_1.isChecked(),
         }
         self._run_thread(self._worker_tai_tach, nguon, cfg)
 
@@ -235,6 +240,7 @@ class TaiTachHsqWindow(TaiHsqPySide6Window):
                 quet_het=cfg["quet_het"],
                 muc_thieu=cfg["muc_thieu"],
                 tu_kiem_tra_thieu=cfg["tu_kiem_tra_thieu"],
+                bo_qua_nhom_1=cfg["bo_qua_nhom_1"],
             )
             self.bridge.excelTaiSignal.emit(excel_thieu or excel)
             if self.stop_flag:
